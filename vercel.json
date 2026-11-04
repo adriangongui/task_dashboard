@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/cerrar-dia",
+      "schedule": "5 23 * * *"
+    }
+  ]
+}

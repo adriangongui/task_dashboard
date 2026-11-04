@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "insforge": {
+      "command": "npx",
+      "args": ["-y", "@insforge/mcp@latest"],
+      "env": {
+        "API_KEY": "PEGA_AQUI_TU_API_KEY",
+        "API_BASE_URL": "https://TU-PROYECTO.insforge.app"
+      }
+    }
+  }
+}
