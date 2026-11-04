@@ -17,7 +17,7 @@ import type { NuevaTarea, Proyecto, Tarea } from "@/lib/types";
 import { insforgeBrowser, insforgeConfigurado } from "@/lib/insforge/client";
 import AppHeader from "./AppHeader";
 import HechasPanel from "./HechasPanel";
-import ProjectsColumn from "./ProjectsColumn";
+import ProjectsColumn, { SIN_PROYECTO } from "./ProjectsColumn";
 import StatsRow from "./StatsRow";
 import TaskCard from "./TaskCard";
 import TaskDetailPanel from "./TaskDetailPanel";
@@ -87,6 +87,15 @@ const NOMBRE_DESTINO: Record<DestinoArrastre, string> = {
   sin_terminar: "Sin terminar",
 };
 
+/** En móvil las columnas son pestañas: también valen como destino al soltar. */
+const DESTINO_TAB: Record<TabKey, string> = {
+  hoy: "hoy",
+  manana: "manana",
+  semana: "semana",
+  proyectos: "proyectos",
+  sin_terminar: "sin_terminar",
+};
+
 export default function Dashboard() {
   const [tareas, setTareas] = useState<Tarea[]>([]);
   const [proyectos, setProyectos] = useState<Proyecto[]>([]);
@@ -125,6 +134,26 @@ export default function Dashboard() {
     const id = setTimeout(() => setAviso(null), 3800);
     return () => clearTimeout(id);
   }, [aviso]);
+
+  // Con el dedo, mientras arrastras bloqueamos el scroll de la página para que
+  // el gesto no se cancele y las pestañas sigan siendo alcanzables.
+  useEffect(() => {
+    if (!arrastre) return;
+    const { body } = document;
+    const previo = {
+      touchAction: body.style.touchAction,
+      overscroll: body.style.overscrollBehavior,
+      userSelect: body.style.userSelect,
+    };
+    body.style.touchAction = "none";
+    body.style.overscrollBehavior = "contain";
+    body.style.userSelect = "none";
+    return () => {
+      body.style.touchAction = previo.touchAction;
+      body.style.overscrollBehavior = previo.overscroll;
+      body.style.userSelect = previo.userSelect;
+    };
+  }, [arrastre]);
 
   const cargar = useCallback(async () => {
     try {
@@ -211,7 +240,21 @@ export default function Dashboard() {
       try {
         if (destino === "sin_terminar") {
           await actualizarTarea(id, { estado: "sin_terminar" });
+          setTab("sin_terminar");
           setAviso("Movida a Sin terminar");
+          return;
+        }
+
+        if (destino === "proyectos") {
+          await actualizarTarea(id, {
+            tipo: "proyecto",
+            estado: "pendiente",
+            proyecto_id: null,
+            fecha_para: null,
+          });
+          setExpandidos((prev) => new Set(prev).add(SIN_PROYECTO));
+          setTab("proyectos");
+          setAviso("Movida a Proyectos futuros");
           return;
         }
 
@@ -240,6 +283,7 @@ export default function Dashboard() {
                   ? mananaISO()
                   : null,
           });
+          setTab(destino as TabKey);
           setAviso(`Movida a ${NOMBRE_DESTINO[destino]}`);
         }
       } catch (e) {
@@ -628,19 +672,23 @@ export default function Dashboard() {
       ) : null}
 
       {/* Pestañas solo móvil; en escritorio se ven las cinco columnas. */}
-      <div className="no-scrollbar -mx-4 mt-6 flex gap-1.5 overflow-x-auto px-4 pb-1 lg:hidden">
+      <div className="no-scrollbar sticky top-0 z-40 -mx-4 mt-6 flex gap-1.5 overflow-x-auto bg-canvas/95 px-4 pb-1 pt-2 backdrop-blur-sm sm:-mx-6 sm:px-6 lg:hidden">
         {SECCIONES.map((seccion) => {
           const activa = tab === seccion.key;
           return (
             <button
               key={seccion.key}
               type="button"
+              data-destino={DESTINO_TAB[seccion.key]}
               onClick={() => setTab(seccion.key)}
               className={[
                 "flex shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-2 text-[13px] font-medium transition",
                 activa
                   ? "border-transparent bg-white shadow-card text-ink"
                   : "border-transparent bg-white/50 text-muted hover:bg-white",
+                zonaActiva === DESTINO_TAB[seccion.key]
+                  ? "border-transparent bg-white text-ink ring-2 ring-hoy/45"
+                  : "",
               ].join(" ")}
               aria-pressed={activa}
             >

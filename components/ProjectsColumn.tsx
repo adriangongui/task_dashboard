@@ -19,7 +19,7 @@ interface Props {
   ) => void;
 }
 
-const SIN_PROYECTO = "sin-proyecto";
+export const SIN_PROYECTO = "sin-proyecto";
 
 export default function ProjectsColumn({
   proyectos,

@@ -41,9 +41,10 @@ export default function TaskCard({
       onPointerDown={
         onPointerDown ? (event) => onPointerDown(event, tarea) : undefined
       }
+      onContextMenu={(event) => event.preventDefault()}
       aria-label={`Abrir detalle de ${tarea.titulo}`}
       className={[
-        "group relative w-full cursor-pointer rounded-card border bg-white p-3.5 text-left shadow-card transition",
+        "group relative w-full cursor-pointer select-none rounded-card border bg-white p-3.5 text-left shadow-card transition",
         "hover:-translate-y-px hover:border-[#D9D6CD] hover:shadow-[0_4px_14px_rgba(35,33,30,0.06)]",
         sugerida
           ? "border-hoy/45 bg-hoy/[0.045] ring-2 ring-hoy/20"

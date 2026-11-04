@@ -199,7 +199,7 @@ scripts/generar-iconos.ps1       # regenera los iconos PNG desde public/icons/ap
 ## Notas
 
 - El panel usa un único árbol de componentes: en escritorio se convierte en grid de 5 columnas; en móvil (`< 1024px`) muestra pestañas horizontales con scroll y solo la sección activa. La lógica no está duplicada.
-- Arrastrar: con ratón basta mover la tarjeta; en táctil hay que mantener pulsada (~320 ms) para no bloquear el scroll. Se puede soltar en Hoy, Mañana, Esta semana, Sin terminar o sobre una tarjeta de proyecto. En móvil, el detalle de cada tarea tiene botones «Mover a» para cambiar de columna sin arrastrar.
+- Arrastrar: con ratón basta mover la tarjeta; en táctil hay que mantener pulsada (~320 ms) para no bloquear el scroll. Se puede soltar en Hoy, Mañana, Esta semana, Sin terminar o sobre una tarjeta de proyecto. En móvil se mantiene pulsada la tarea y se suelta sobre la pestaña de la columna (Hoy, Mañana, Semana, Proyectos o Sin terminar), que se resalta mientras arrastras; la barra de pestañas queda fija arriba para poder soltar ahí aunque estés bajado en la lista. Además, el detalle de cada tarea tiene botones «Mover a» para cambiar de columna sin arrastrar.
 - «Hechas · 3 días» abre el historial de tareas completadas hoy, ayer y anteayer, agrupadas por día.
 - No hay backend propio para leer datos: el navegador habla directo con InsForge usando la anon key.
 - «Nueva tarea» abre un panel para crear tareas sin pasar por Telegram: eliges Hoy, Esta semana o un proyecto (creándolo si escribes uno nuevo), con duración y si es paralelizable. Las de Hoy se guardan con `fecha_para` = hoy.
