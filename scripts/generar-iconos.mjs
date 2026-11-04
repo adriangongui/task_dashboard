@@ -144,14 +144,16 @@ function dibujar(tamano, { maskable = false } = {}) {
 
 mkdirSync("public/icons", { recursive: true });
 
-writeFileSync("public/icons/icon-192.png", dibujar(192));
-writeFileSync("public/icons/icon-512.png", dibujar(512));
+// Nombres versionados: si un deploy anterior dejó un 404 cacheado para un
+// icono, Chrome se niega a instalar la PWA. Con nombres nuevos se evita.
+writeFileSync("public/icons/icon-192-v2.png", dibujar(192));
+writeFileSync("public/icons/icon-512-v2.png", dibujar(512));
 writeFileSync(
-  "public/icons/icon-maskable-512.png",
+  "public/icons/icon-maskable-512-v2.png",
   dibujar(512, { maskable: true }),
 );
 writeFileSync(
-  "public/apple-touch-icon.png",
+  "public/apple-touch-icon-v2.png",
   dibujar(180, { maskable: true }),
 );
 
