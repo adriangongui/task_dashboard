@@ -1,9 +1,16 @@
-import type { Clasificacion, Tipo } from "./types";
+import type { Clasificacion, DestinoResuelto, Tipo } from "./types";
 
 const MODELO_POR_DEFECTO = "openai/gpt-oss-120b";
 const URL_GROQ = "https://api.groq.com/openai/v1/chat/completions";
 
 const TIPOS_VALIDOS: Tipo[] = ["hoy", "semana", "proyecto"];
+const ACCIONES_VALIDAS: DestinoResuelto["accion"][] = [
+  "hoy",
+  "semana",
+  "proyecto",
+  "cancelar",
+  "duda",
+];
 
 function construirPrompt(proyectos: string[]): string {
   const listaProyectos =
@@ -22,7 +29,8 @@ Devuelve SOLO un JSON válido, sin markdown ni explicaciones, con esta forma exa
   "tipo": "hoy" | "semana" | "proyecto",
   "duracion_estimada_min": número entero o null si no se puede estimar,
   "paralelizable": true/false,
-  "proyecto_sugerido": "nombre del proyecto si detecta que pertenece a uno existente, o null"
+  "proyecto_sugerido": "nombre del proyecto si detecta que pertenece a uno existente, o null",
+  "destino_claro": true/false
 }
 
 PROYECTOS EXISTENTES:
@@ -32,6 +40,10 @@ Reglas de clasificación de "tipo":
 - "hoy": algo que se puede hacer en el día, urgente o puntual.
 - "semana": tiene más margen pero no es un proyecto grande.
 - "proyecto": si menciona o encaja con un proyecto ya existente en la lista, o si describe algo con varias fases.
+
+Reglas de "destino_claro":
+- true si el texto dice cuándo hacerlo (hoy, mañana, esta semana, el lunes...) o a qué proyecto pertenece.
+- false si la nota solo nombra algo suelto sin decir cuándo ni dónde va (ej. "comprar pilas", "llamar a Ana"). En ese caso "tipo" es solo una suposición.
 
 Reglas de "paralelizable":
 - true si es una tarea que no requiere atención constante (ej. "series de rodaje suave", "dejar algo cocinando", "esperar una descarga").
@@ -60,6 +72,47 @@ function extraerJSON(texto: string): unknown {
     }
     throw new Error("La IA no devolvió JSON válido");
   }
+}
+
+async function pedirJSON(sistema: string, usuario: string): Promise<unknown> {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    throw new Error("Falta GROQ_API_KEY en el entorno del servidor");
+  }
+
+  const modelo = process.env.GROQ_MODEL?.trim() || MODELO_POR_DEFECTO;
+
+  const respuesta = await fetch(URL_GROQ, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: modelo,
+      temperature: 0,
+      max_tokens: 1500,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: sistema },
+        { role: "user", content: usuario },
+      ],
+    }),
+  });
+
+  if (!respuesta.ok) {
+    const error = await respuesta.text();
+    throw new Error(`Groq ${respuesta.status}: ${error.slice(0, 300)}`);
+  }
+
+  const data = (await respuesta.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+
+  const salida = data.choices?.[0]?.message?.content?.trim();
+  if (!salida) throw new Error("Respuesta vacía de Groq");
+
+  return extraerJSON(salida);
 }
 
 function normalizar(datos: unknown, textoOriginal: string): Clasificacion {
@@ -97,6 +150,9 @@ function normalizar(datos: unknown, textoOriginal: string): Clasificacion {
     duracion_estimada_min: duracion,
     paralelizable: d.paralelizable === true,
     proyecto_sugerido: proyecto,
+    // Si el modelo no lo devuelve, no preguntamos: mantenemos el
+    // comportamiento anterior de clasificar directamente.
+    destino_claro: typeof d.destino_claro === "boolean" ? d.destino_claro : true,
   };
 }
 
@@ -104,46 +160,56 @@ export async function clasificarTarea(
   texto: string,
   proyectos: string[],
 ): Promise<Clasificacion> {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
-    throw new Error("Falta GROQ_API_KEY en el entorno del servidor");
-  }
+  const datos = await pedirJSON(
+    construirPrompt(proyectos),
+    `Texto de la nota:\n"""\n${texto}\n"""`,
+  );
 
-  const modelo = process.env.GROQ_MODEL?.trim() || MODELO_POR_DEFECTO;
+  return normalizar(datos, texto);
+}
 
-  const respuesta = await fetch(URL_GROQ, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: modelo,
-      temperature: 0,
-      max_tokens: 1500,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: construirPrompt(proyectos) },
-        {
-          role: "user",
-          content: `Texto de la nota:\n"""\n${texto}\n"""`,
-        },
-      ],
-    }),
-  });
+/**
+ * Interpreta la respuesta del usuario a la pregunta "¿dónde pongo esto?".
+ * Devuelve a qué columna va (o si prefiere cancelarla).
+ */
+export async function interpretarDestino(
+  texto: string,
+  proyectos: string[],
+  titulo: string,
+): Promise<DestinoResuelto> {
+  const lista =
+    proyectos.length > 0
+      ? proyectos.map((p) => `- ${p}`).join("\n")
+      : "(no hay proyectos todavía)";
 
-  if (!respuesta.ok) {
-    const error = await respuesta.text();
-    throw new Error(`Groq ${respuesta.status}: ${error.slice(0, 300)}`);
-  }
+  const sistema = `El usuario está decidiendo dónde guardar una tarea en un gestor personal.
 
-  const data = (await respuesta.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
+Devuelve SOLO un JSON válido, sin markdown, con esta forma exacta:
+{"accion": "hoy" | "semana" | "proyecto" | "cancelar" | "duda", "proyecto": "nombre" | null}
 
-  const salida = data.choices?.[0]?.message?.content?.trim();
+Reglas:
+- "hoy": dice hoy, ahora, esta tarde, esta noche, mañana, o algo urgente para el día.
+- "semana": dice esta semana, los próximos días, luego, el lunes/martes, o algo sin prisa pero cercano.
+- "proyecto": menciona un proyecto (de la lista o uno nuevo). "proyecto" debe ser el nombre exacto de la lista si coincide, o el nombre que haya dicho.
+- "cancelar": dice cancela, olvídalo, bórralo, déjalo, nada, no era eso.
+- "duda": no se entiende a qué se refiere.
 
-  if (!salida) throw new Error("Respuesta vacía de Groq");
+PROYECTOS EXISTENTES:
+${lista}`;
 
-  return normalizar(extraerJSON(salida), texto);
+  const datos = (await pedirJSON(
+    sistema,
+    `Tarea pendiente: "${titulo}"\nRespuesta del usuario: "${texto}"`,
+  )) as Record<string, unknown>;
+
+  const accion = ACCIONES_VALIDAS.includes(datos.accion as DestinoResuelto["accion"])
+    ? (datos.accion as DestinoResuelto["accion"])
+    : "duda";
+
+  const proyecto =
+    typeof datos.proyecto === "string" && datos.proyecto.trim().length > 0
+      ? datos.proyecto.trim()
+      : null;
+
+  return { accion, proyecto };
 }

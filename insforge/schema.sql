@@ -36,6 +36,25 @@ create table if not exists public.tareas (
   completed_at timestamptz
 );
 
+-- Notas cuyo destino (hoy / semana / proyecto) aún no está claro:
+-- el webhook las guarda aquí y pregunta por Telegram.
+create table if not exists public.tareas_pendientes (
+  id uuid primary key default gen_random_uuid(),
+  chat_id text not null,
+  texto text not null,
+  titulo text not null,
+  detalle text not null default '',
+  duracion_estimada_min integer,
+  paralelizable boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists tareas_pendientes_chat_idx
+  on public.tareas_pendientes (chat_id);
+
+-- Solo la usa el servidor (webhook), con la API_KEY de admin.
+alter table public.tareas_pendientes enable row level security;
+
 create index if not exists tareas_tipo_estado_idx on public.tareas (tipo, estado);
 create index if not exists tareas_proyecto_idx on public.tareas (proyecto_id);
 create index if not exists tareas_fecha_para_idx on public.tareas (fecha_para);

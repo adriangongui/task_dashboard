@@ -40,4 +40,12 @@ export interface Clasificacion {
   duracion_estimada_min: number | null;
   paralelizable: boolean;
   proyecto_sugerido: string | null;
+  /** false si la nota no dice cuándo ni dónde va: hay que preguntar. */
+  destino_claro: boolean;
+}
+
+/** Resultado de interpretar la respuesta a "¿dónde pongo esto?". */
+export interface DestinoResuelto {
+  accion: "hoy" | "semana" | "proyecto" | "cancelar" | "duda";
+  proyecto: string | null;
 }

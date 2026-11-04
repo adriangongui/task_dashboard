@@ -96,10 +96,13 @@ Respuesta esperada: `✅ Añadida a Hoy: Llamar al gestor por el contrato`.
 
 Detalles del webhook:
 
-- Devuelve `200` siempre que el update esté bien formado, para que Telegram no reintente en bucle; si Groq o InsForge fallan, el error se cuenta en el chat.
+- Devuelve `200` siempre que el update esté bien formado, para que Telegram no reintente en bucle; si Groq o InsForge fallan, el error se cuenta en el chat y la tarea no se da por guardada.
 - Si `proyecto_sugerido` no existe, se crea el proyecto automáticamente con un color de la paleta.
 - Las tareas de tipo `hoy` se guardan con `fecha_para` = hoy (zona `Europe/Madrid`).
 - El endpoint acepta también `edited_message`.
+- Si la nota no dice cuándo ni dónde va (el clasificador devuelve `destino_claro: false`), el bot **pregunta** «¿Hoy, esta semana o en un proyecto?» y guarda la nota en `tareas_pendientes`, asociada al chat. El siguiente mensaje de ese chat se interpreta como respuesta («hoy», «esta semana», «en el proyecto Web», «cancela») y ahí se crea la tarea. La memoria sobrevive a reinicios y caduca a las 24 h.
+- Un solo pendiente por chat: si llega otra nota sin destino, reemplaza a la anterior.
+- Si el guardado falla, el mensaje de error lo dice y, si había una tarea esperando destino, se conserva para reintentar.
 
 ## 5. Desplegar en Vercel
 
@@ -147,6 +150,8 @@ Duración desconocida = 30 min. Entradas de tiempo aceptadas: `2h 30min`, `1,5h`
 
 `tareas`: `id` (uuid), `titulo`, `detalle`, `tipo` (`hoy` | `semana` | `proyecto`), `estado` (`pendiente` | `hecha` | `sin_terminar`), `duracion_estimada_min` (nullable), `paralelizable` (bool), `proyecto_id` (fk nullable), `fecha_para` (date nullable), `created_at`, `completed_at`.
 
+`tareas_pendientes`: `id`, `chat_id` (único), `texto`, `titulo`, `detalle`, `duracion_estimada_min`, `paralelizable`, `created_at`. Solo la usa el servidor; no tiene acceso para `anon`.
+
 ## Estructura
 
 ```
@@ -170,7 +175,9 @@ lib/
   duration.ts                     # parseo/formato de tiempos
   insforge/client.ts              # cliente de navegador (anon key)
   insforge/server.ts              # cliente de servidor (admin API key)
+  pending.ts                      # notas esperando que el usuario diga el destino
 insforge/schema.sql
+insforge/migrations/              # cambios aplicados sobre una base existente
 ```
 
 ## Notas
