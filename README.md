@@ -2,11 +2,11 @@
 
 Sistema personal de gestión de tareas con dos caras:
 
-- **Bot de Telegram** (`/api/telegram/webhook`): mandas una nota de texto (o una transcripción de voz) y Claude la convierte en una tarea con título corto, tipo, duración estimada, si es paralelizable y proyecto.
+- **Bot de Telegram** (`/api/telegram/webhook`): mandas una nota de texto (o una transcripción de voz) y Groq la convierte en una tarea con título corto, tipo, duración estimada, si es paralelizable y proyecto.
 - **Panel web** (Next.js 14 App Router + InsForge): columnas Hoy / Esta semana / Proyectos futuros / Sin terminar, progreso por proyecto, detalle en panel lateral y plan del día según el tiempo que tengas.
 
 ```
-Telegram  →  /api/telegram/webhook  →  Anthropic (clasifica)  →  InsForge (Postgres)
+Telegram  →  /api/telegram/webhook  →  Groq (clasifica)  →  InsForge (Postgres)
                                                                      ↑
 Navegador  →  @insforge/sdk (ANON_KEY, lectura/escritura directa)  ──┘
 Navegador  →  /api/plan-dia (algoritmo, sin IA)  ────────────────────┘
@@ -49,7 +49,8 @@ Copia `.env.example` a `.env.local` (ya existe uno con la URL y la API_KEY de es
 | `NEXT_PUBLIC_INSFORGE_URL` | web y servidor |
 | `NEXT_PUBLIC_INSFORGE_ANON_KEY` | navegador (lectura/escritura de tareas) |
 | `INSFORGE_API_KEY` | webhook de Telegram, `/api/plan-dia`, cron |
-| `ANTHROPIC_API_KEY` | clasificación de la nota |
+| `GROQ_API_KEY` | clasificación de la nota |
+| `GROQ_MODEL` | opcional, por defecto `openai/gpt-oss-120b` |
 | `TELEGRAM_BOT_TOKEN` | responder en el chat |
 | `TELEGRAM_WEBHOOK_SECRET` | opcional, valida `X-Telegram-Bot-Api-Secret-Token` |
 
@@ -95,7 +96,7 @@ Respuesta esperada: `✅ Añadida a Hoy: Llamar al gestor por el contrato`.
 
 Detalles del webhook:
 
-- Devuelve `200` siempre que el update esté bien formado, para que Telegram no reintente en bucle; si Anthropic o InsForge fallan, el error se cuenta en el chat.
+- Devuelve `200` siempre que el update esté bien formado, para que Telegram no reintente en bucle; si Groq o InsForge fallan, el error se cuenta en el chat.
 - Si `proyecto_sugerido` no existe, se crea el proyecto automáticamente con un color de la paleta.
 - Las tareas de tipo `hoy` se guardan con `fecha_para` = hoy (zona `Europe/Madrid`).
 - El endpoint acepta también `edited_message`.
@@ -162,7 +163,7 @@ components/
   TaskDetailPanel.tsx             # detalle completo + editar duración
   ProjectsColumn.tsx              # barras de progreso y proyectos expandibles
 lib/
-  ai.ts                           # llamada a Anthropic + prompt JSON
+  ai.ts                           # llamada a Groq + prompt JSON
   plan.ts                         # algoritmo del plan del día
   dates.ts                        # zona horaria, saludo, racha
   duration.ts                     # parseo/formato de tiempos
@@ -175,4 +176,4 @@ insforge/schema.sql
 
 - El panel usa un único árbol de componentes: en escritorio se convierte en grid de 4 columnas; en móvil (`< 1024px`) muestra pestañas horizontales con scroll y solo la sección activa. La lógica no está duplicada.
 - No hay backend propio para leer datos: el navegador habla directo con InsForge usando la anon key.
-- El modelo usado en `lib/ai.ts` es `claude-sonnet-4-6`.
+- El clasificador usa Groq (`https://api.groq.com/openai/v1/chat/completions`) en modo JSON. Cambia el modelo con `GROQ_MODEL`; el valor por defecto es `openai/gpt-oss-120b` (comprueba con `GET /openai/v1/models` qué modelos expone tu cuenta).

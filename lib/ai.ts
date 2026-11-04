@@ -1,6 +1,7 @@
 import type { Clasificacion, Tipo } from "./types";
 
-const MODELO = "claude-sonnet-4-6";
+const MODELO_POR_DEFECTO = "openai/gpt-oss-120b";
+const URL_GROQ = "https://api.groq.com/openai/v1/chat/completions";
 
 const TIPOS_VALIDOS: Tipo[] = ["hoy", "semana", "proyecto"];
 
@@ -103,24 +104,26 @@ export async function clasificarTarea(
   texto: string,
   proyectos: string[],
 ): Promise<Clasificacion> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    throw new Error("Falta ANTHROPIC_API_KEY en el entorno del servidor");
+    throw new Error("Falta GROQ_API_KEY en el entorno del servidor");
   }
 
-  const respuesta = await fetch("https://api.anthropic.com/v1/messages", {
+  const modelo = process.env.GROQ_MODEL?.trim() || MODELO_POR_DEFECTO;
+
+  const respuesta = await fetch(URL_GROQ, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
+      authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: MODELO,
-      max_tokens: 1500,
+      model: modelo,
       temperature: 0,
-      system: construirPrompt(proyectos),
+      max_tokens: 1500,
+      response_format: { type: "json_object" },
       messages: [
+        { role: "system", content: construirPrompt(proyectos) },
         {
           role: "user",
           content: `Texto de la nota:\n"""\n${texto}\n"""`,
@@ -131,20 +134,16 @@ export async function clasificarTarea(
 
   if (!respuesta.ok) {
     const error = await respuesta.text();
-    throw new Error(`Anthropic ${respuesta.status}: ${error.slice(0, 300)}`);
+    throw new Error(`Groq ${respuesta.status}: ${error.slice(0, 300)}`);
   }
 
   const data = (await respuesta.json()) as {
-    content?: Array<{ type: string; text?: string }>;
+    choices?: Array<{ message?: { content?: string } }>;
   };
 
-  const salida = (data.content ?? [])
-    .filter((bloque) => bloque.type === "text")
-    .map((bloque) => bloque.text ?? "")
-    .join("\n")
-    .trim();
+  const salida = data.choices?.[0]?.message?.content?.trim();
 
-  if (!salida) throw new Error("Respuesta vacía de Anthropic");
+  if (!salida) throw new Error("Respuesta vacía de Groq");
 
   return normalizar(extraerJSON(salida), texto);
 }
