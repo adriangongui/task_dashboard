@@ -10,6 +10,9 @@
   body {
     @apply bg-canvas text-ink antialiased;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    /* Hueco para la isla/notch cuando se abre instalada en el móvil. */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   ::selection {

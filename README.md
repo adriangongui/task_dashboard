@@ -65,6 +65,15 @@ npm run dev
 
 Abre la URL que imprime Next.js (normalmente `http://localhost:3000`).
 
+### Instalar en el móvil
+
+El panel es una PWA: se instala desde el navegador y se abre a pantalla completa, sin barra de direcciones.
+
+- **Android (Chrome/Edge)**: menú ⋮ → «Instalar aplicación» (o «Añadir a pantalla de inicio»).
+- **iPhone/iPad (Safari)**: botón Compartir → «Añadir a pantalla de inicio».
+
+En producción funciona sobre el HTTPS de Vercel; en local basta con `localhost`. El manifest está en `app/manifest.ts`, los iconos se generan con `node scripts/generar-iconos.mjs` y el service worker (`public/sw.js`) guarda el shell para abrir el panel sin conexión (las tareas se piden a InsForge, así que sin red se ve la última carga).
+
 ## 4. Crear el bot de Telegram y configurar el webhook
 
 1. Habla con [@BotFather](https://t.me/BotFather), usa `/newbot` y guarda el token en `TELEGRAM_BOT_TOKEN`.
@@ -159,7 +168,11 @@ app/
   api/telegram/webhook/route.ts   # recibe, clasifica, guarda y responde
   api/plan-dia/route.ts           # subconjunto sugerido de tareas de hoy
   api/cron/cerrar-dia/route.ts    # pasa las de hoy no hechas a sin_terminar
-  layout.tsx / page.tsx / globals.css
+  layout.tsx / page.tsx / globals.css / manifest.ts   # metadatos y PWA
+public/
+  sw.js                           # service worker (shell offline)
+  offline.html                    # aviso sin conexión
+  icons/ y apple-touch-icon.png   # iconos generados por el script
 components/
   Dashboard.tsx                   # estado, mutaciones y layout responsive
   AppHeader.tsx                   # saludo, fecha y "Proponer plan"
@@ -178,6 +191,7 @@ lib/
   pending.ts                      # notas esperando que el usuario diga el destino
 insforge/schema.sql
 insforge/migrations/              # cambios aplicados sobre una base existente
+scripts/generar-iconos.mjs       # regenera los iconos PNG de la PWA
 ```
 
 ## Notas
