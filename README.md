@@ -108,10 +108,12 @@ Respuesta esperada: `✅ Añadida a Hoy: Llamar al gestor por el contrato`.
 Detalles del webhook:
 
 - Devuelve `200` siempre que el update esté bien formado, para que Telegram no reintente en bucle; si Groq o InsForge fallan, el error se cuenta en el chat y la tarea no se da por guardada.
-- Si `proyecto_sugerido` no existe, se crea el proyecto automáticamente con un color de la paleta.
+- Los proyectos **solo se crean si lo pides**: «crea el proyecto Kerbal». Si el clasificador sugiere un proyecto que no existe, la tarea se guarda sin proyecto.
+- Para meter una tarea en un proyecto: «mete en el proyecto Kerbal la tarea jugar al roblox». Si no dices la tarea, el bot pregunta «¿Qué tarea meto en Kerbal?» y usa tu siguiente mensaje.
+- Borrar por chat: «elimina la tarea anterior» (la última que creó el bot), «elimina la tarea de comprar pan» (por título) o «elimina tareas» → pregunta «hoy», «mañana» o «esta semana», lista esa columna numerada y borra la que elijas por número o título. El estado de cada conversación vive en la tabla `estados_chat`.
 - Las tareas de tipo `hoy` se guardan con `fecha_para` = hoy (zona `Europe/Madrid`).
 - El endpoint acepta también `edited_message`.
-- Si la nota no dice cuándo ni dónde va (el clasificador devuelve `destino_claro: false`), el bot **pregunta** «¿Hoy, esta semana o en un proyecto?» y guarda la nota en `tareas_pendientes`, asociada al chat. El siguiente mensaje de ese chat se interpreta como respuesta («hoy», «esta semana», «en el proyecto Web», «cancela») y ahí se crea la tarea. La memoria sobrevive a reinicios y caduca a las 24 h.
+- Si la nota no dice cuándo ni dónde va (el clasificador devuelve `destino_claro: false`), el bot **pregunta** «¿Hoy, mañana, esta semana o en un proyecto?» y guarda la nota en `tareas_pendientes`, asociada al chat. El siguiente mensaje de ese chat se interpreta como respuesta («hoy», «esta semana», «en el proyecto Web», «cancela») y ahí se crea la tarea. La memoria sobrevive a reinicios y caduca a las 24 h.
 - Un solo pendiente por chat: si llega otra nota sin destino, reemplaza a la anterior.
 - Si el guardado falla, el mensaje de error lo dice y, si había una tarea esperando destino, se conserva para reintentar.
 

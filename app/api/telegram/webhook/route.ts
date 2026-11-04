@@ -1,5 +1,13 @@
 import { clasificarTarea, interpretarDestino } from "@/lib/ai";
+import { parsearComando } from "@/lib/comandos";
 import { hoyISO, mananaISO } from "@/lib/dates";
+import { interpretarDestinoRapido } from "@/lib/destino";
+import {
+  guardarEstado,
+  limpiarAccion,
+  obtenerEstado,
+  recordarUltimaTarea,
+} from "@/lib/estado";
 import { insforgeServer } from "@/lib/insforge/server";
 import { colorParaNombre } from "@/lib/palette";
 import {
@@ -8,7 +16,7 @@ import {
   obtenerPendiente,
   type TareaPendiente,
 } from "@/lib/pending";
-import type { Proyecto, Tipo } from "@/lib/types";
+import type { Proyecto, Tarea, Tipo } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,6 +87,31 @@ function preguntaDestino(titulo: string, proyectos: string[]): string {
   return `🤔 No sé dónde poner «${titulo}».\n¿Hoy, mañana, esta semana o en un proyecto?${extra}\nSi no la quieres, dime «cancela».`;
 }
 
+function pedirColumna(): string {
+  return "¿De qué columna quieres borrar?\nDime «hoy», «mañana» o «esta semana».";
+}
+
+function listadoParaBorrar(tareas: Tarea[]): string {
+  const lineas = tareas.map(
+    (t, i) => `${i + 1}. ${t.titulo}${t.tipo ? ` · ${ETIQUETA_TIPO[t.tipo] ?? t.tipo}` : ""}`,
+  );
+  return `¿Cuál borro?\n${lineas.join("\n")}\n\nDime el número (o parte del título). «cancela» para dejarlo.`;
+}
+
+function elegirDeLista(texto: string, tareas: Tarea[]): Tarea | null {
+  const numero = texto.match(/^\d{1,2}$/);
+  if (numero) {
+    return tareas[Number(numero[0]) - 1] ?? null;
+  }
+
+  const buscado = normalizarNombre(texto);
+  if (!buscado) return null;
+
+  return (
+    tareas.find((t) => normalizarNombre(t.titulo).includes(buscado)) ?? null
+  );
+}
+
 async function cargarProyectos(): Promise<Proyecto[]> {
   const insforge = insforgeServer();
 
@@ -92,32 +125,95 @@ async function cargarProyectos(): Promise<Proyecto[]> {
   return (data ?? []) as unknown as Proyecto[];
 }
 
-async function resolverProyecto(
+/** Busca un proyecto existente. Nunca lo crea: eso solo se hace si lo pides. */
+function buscarProyecto(
   nombre: string,
   proyectos: Proyecto[],
-): Promise<{ id: string; nombre: string }> {
+): Proyecto | undefined {
   const buscado = normalizarNombre(nombre);
-  const existente = proyectos.find(
-    (p) => normalizarNombre(p.nombre) === buscado,
+  if (!buscado) return undefined;
+
+  return (
+    proyectos.find((p) => normalizarNombre(p.nombre) === buscado) ??
+    proyectos.find((p) => {
+      const actual = normalizarNombre(p.nombre);
+      return actual.includes(buscado) || buscado.includes(actual);
+    })
   );
+}
 
-  if (existente) {
-    return { id: existente.id, nombre: existente.nombre };
-  }
-
+async function crearProyecto(nombre: string): Promise<Proyecto> {
   const insforge = insforgeServer();
 
-  const { data: creado, error } = await insforge.database
+  const { data, error } = await insforge.database
     .from("proyectos")
     .insert([{ nombre, color: colorParaNombre(nombre) }])
     .select();
 
   if (error) throw error;
 
-  const nuevo = (creado as Array<{ id?: string; nombre?: string }> | null)?.[0];
+  const nuevo = (data as Proyecto[] | null)?.[0];
   if (!nuevo?.id) throw new Error("No se pudo crear el proyecto");
 
-  return { id: nuevo.id, nombre: nuevo.nombre ?? nombre };
+  return nuevo;
+}
+
+async function listarPendientes(tipo: Tipo): Promise<Tarea[]> {
+  const { data, error } = await insforgeServer()
+    .database.from("tareas")
+    .select("*")
+    .eq("tipo", tipo)
+    .eq("estado", "pendiente")
+    .order("created_at", { ascending: true });
+
+  if (error) throw error;
+
+  return (data ?? []) as unknown as Tarea[];
+}
+
+async function listarPendientesTodas(): Promise<Tarea[]> {
+  const { data, error } = await insforgeServer()
+    .database.from("tareas")
+    .select("*")
+    .eq("estado", "pendiente")
+    .order("created_at", { ascending: true });
+
+  if (error) throw error;
+
+  return (data ?? []) as unknown as Tarea[];
+}
+
+async function tareaPorId(id: string): Promise<Tarea | null> {
+  const { data, error } = await insforgeServer()
+    .database.from("tareas")
+    .select("*")
+    .eq("id", id)
+    .limit(1);
+
+  if (error) throw error;
+
+  return (data as Tarea[] | null)?.[0] ?? null;
+}
+
+async function tareaMasReciente(): Promise<Tarea | null> {
+  const { data, error } = await insforgeServer()
+    .database.from("tareas")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (error) throw error;
+
+  return (data as Tarea[] | null)?.[0] ?? null;
+}
+
+async function borrarTarea(id: string): Promise<void> {
+  const { error } = await insforgeServer()
+    .database.from("tareas")
+    .delete()
+    .eq("id", id);
+
+  if (error) throw error;
 }
 
 async function insertarTarea(datos: {
@@ -127,23 +223,31 @@ async function insertarTarea(datos: {
   duracion: number | null;
   paralelizable: boolean;
   proyectoId: string | null;
-}): Promise<void> {
+}): Promise<string> {
   const insforge = insforgeServer();
 
-  const { error } = await insforge.database.from("tareas").insert([
-    {
-      titulo: datos.titulo,
-      detalle: datos.detalle,
-      tipo: datos.tipo,
-      estado: "pendiente",
-      duracion_estimada_min: datos.duracion,
-      paralelizable: datos.paralelizable,
-      proyecto_id: datos.proyectoId,
-      fecha_para: fechaParaTipo(datos.tipo),
-    },
-  ]);
+  const { data, error } = await insforge.database
+    .from("tareas")
+    .insert([
+      {
+        titulo: datos.titulo,
+        detalle: datos.detalle,
+        tipo: datos.tipo,
+        estado: "pendiente",
+        duracion_estimada_min: datos.duracion,
+        paralelizable: datos.paralelizable,
+        proyecto_id: datos.proyectoId,
+        fecha_para: fechaParaTipo(datos.tipo),
+      },
+    ])
+    .select("id");
 
   if (error) throw error;
+
+  const id = (data as Array<{ id?: string }> | null)?.[0]?.id;
+  if (!id) throw new Error("No se pudo guardar la tarea");
+
+  return id;
 }
 
 export async function POST(request: Request) {
@@ -173,7 +277,10 @@ export async function POST(request: Request) {
   if (/^\/(start|help)\b/.test(texto)) {
     await enviarMensaje(
       chatId,
-      "Escríbeme una tarea y la clasifico sola. Puedes mandar una nota larga o una transcripción de voz: yo saco el título, el proyecto y la duración.\n\nSi no tengo claro dónde ponerla, te preguntaré: respóndeme «hoy», «mañana», «esta semana» o el nombre del proyecto.",
+      "Escríbeme una tarea y la clasifico sola.\n\n" +
+        "· Proyectos: «crea el proyecto Kerbal» y «mete en el proyecto Kerbal la tarea …».\n" +
+        "· Borrar: «elimina la tarea anterior», «elimina la tarea de comprar pilas» o «elimina tareas» y te pregunto de qué columna.\n" +
+        "· Si no tengo claro dónde va una tarea, te pregunto: «hoy», «mañana», «esta semana» o un proyecto.",
     );
     return Response.json({ ok: true });
   }
@@ -183,10 +290,245 @@ export async function POST(request: Request) {
   try {
     const listaProyectos = await cargarProyectos();
     const nombres = listaProyectos.map((p) => p.nombre);
+    const estado = await obtenerEstado(chatId);
+    const accion = estado?.accion ?? null;
 
+    // ---------------------------------------------------------------
+    // Conversaciones que dejamos abiertas en mensajes anteriores
+    // ---------------------------------------------------------------
+    if (accion === "proyecto_tarea") {
+      const nombreProyecto = String(estado?.datos?.proyecto ?? "");
+      const proyecto = buscarProyecto(nombreProyecto, listaProyectos);
+      await limpiarAccion(chatId);
+
+      if (!proyecto) {
+        await enviarMensaje(
+          chatId,
+          `El proyecto «${nombreProyecto}» ya no existe. Dime «crea el proyecto ${nombreProyecto}» si quieres crearlo.`,
+        );
+        return Response.json({ ok: true });
+      }
+
+      const destino = interpretarDestinoRapido(texto, []);
+      if (destino?.accion === "cancelar") {
+        await enviarMensaje(chatId, "Vale, no añado nada.");
+        return Response.json({ ok: true });
+      }
+
+      const clasificacion = await clasificarTarea(texto, nombres);
+      const id = await insertarTarea({
+        titulo: clasificacion.titulo,
+        detalle: clasificacion.detalle,
+        tipo: "proyecto",
+        duracion: clasificacion.duracion_estimada_min,
+        paralelizable: clasificacion.paralelizable,
+        proyectoId: proyecto.id,
+      });
+      await recordarUltimaTarea(chatId, id);
+
+      await enviarMensaje(
+        chatId,
+        `✅ Añadida a ${proyecto.nombre}: ${clasificacion.titulo}`,
+      );
+      return Response.json({ ok: true, desdeConversacion: true });
+    }
+
+    if (accion === "borrar_columna") {
+      const destino = interpretarDestinoRapido(texto, []);
+
+      if (destino?.accion === "cancelar") {
+        await limpiarAccion(chatId);
+        await enviarMensaje(chatId, "Vale, no borro nada.");
+        return Response.json({ ok: true });
+      }
+
+      if (!destino || !["hoy", "manana", "semana"].includes(destino.accion)) {
+        await enviarMensaje(chatId, pedirColumna());
+        return Response.json({ ok: true, pregunta: true });
+      }
+
+      const tipo = destino.accion as Tipo;
+      const tareas = await listarPendientes(tipo);
+
+      if (tareas.length === 0) {
+        await limpiarAccion(chatId);
+        await enviarMensaje(
+          chatId,
+          `No hay tareas pendientes en ${ETIQUETA_TIPO[tipo]}.`,
+        );
+        return Response.json({ ok: true });
+      }
+
+      await guardarEstado(chatId, {
+        accion: "borrar_elegir",
+        datos: { ids: tareas.map((t) => t.id) },
+      });
+      await enviarMensaje(chatId, listadoParaBorrar(tareas));
+      return Response.json({ ok: true, pregunta: true });
+    }
+
+    if (accion === "borrar_elegir") {
+      const ids = Array.isArray(estado?.datos?.ids)
+        ? (estado?.datos?.ids as string[])
+        : [];
+      const tareas = (await listarPendientesTodas()).filter((t) =>
+        ids.includes(t.id),
+      );
+
+      const destino = interpretarDestinoRapido(texto, []);
+      if (destino?.accion === "cancelar") {
+        await limpiarAccion(chatId);
+        await enviarMensaje(chatId, "Vale, no borro nada.");
+        return Response.json({ ok: true });
+      }
+
+      if (tareas.length === 0) {
+        await limpiarAccion(chatId);
+        await enviarMensaje(chatId, "Esas tareas ya no existen.");
+        return Response.json({ ok: true });
+      }
+
+      const elegida = elegirDeLista(texto, tareas);
+      if (!elegida) {
+        await enviarMensaje(
+          chatId,
+          `No sé cuál dices.\n\n${listadoParaBorrar(tareas)}`,
+        );
+        return Response.json({ ok: true, pregunta: true });
+      }
+
+      await borrarTarea(elegida.id);
+      await limpiarAccion(chatId);
+      await enviarMensaje(chatId, `🗑️ Eliminada: ${elegida.titulo}`);
+      return Response.json({ ok: true, eliminada: true });
+    }
+
+    // ---------------------------------------------------------------
+    // Órdenes explícitas: crear proyecto, meter tarea, borrar
+    // ---------------------------------------------------------------
+    const comando = parsearComando(texto);
+
+    if (comando?.tipo === "crear_proyecto") {
+      const existente = buscarProyecto(comando.nombre, listaProyectos);
+      if (existente) {
+        await enviarMensaje(
+          chatId,
+          `Ese proyecto ya existe: ${existente.nombre}.`,
+        );
+        return Response.json({ ok: true, comando: "crear_proyecto" });
+      }
+
+      const creado = await crearProyecto(comando.nombre);
+      await enviarMensaje(
+        chatId,
+        `✅ Proyecto creado: ${creado.nombre}\nCuando quieras: «mete en el proyecto ${creado.nombre} la tarea …».`,
+      );
+      return Response.json({ ok: true, comando: "crear_proyecto" });
+    }
+
+    if (comando?.tipo === "anadir_a_proyecto") {
+      const proyecto = buscarProyecto(comando.proyecto, listaProyectos);
+
+      if (!proyecto) {
+        await enviarMensaje(
+          chatId,
+          `No existe el proyecto «${comando.proyecto}» y no lo creo sin que me lo pidas.\nDime «crea el proyecto ${comando.proyecto}» y luego te pido la tarea.`,
+        );
+        return Response.json({ ok: true, comando: "anadir_a_proyecto" });
+      }
+
+      if (!comando.tarea) {
+        await guardarEstado(chatId, {
+          accion: "proyecto_tarea",
+          datos: { proyecto: proyecto.nombre },
+        });
+        await enviarMensaje(chatId, `¿Qué tarea meto en ${proyecto.nombre}?`);
+        return Response.json({ ok: true, pregunta: true });
+      }
+
+      const clasificacion = await clasificarTarea(comando.tarea, nombres);
+      const id = await insertarTarea({
+        titulo: clasificacion.titulo,
+        detalle: clasificacion.detalle,
+        tipo: "proyecto",
+        duracion: clasificacion.duracion_estimada_min,
+        paralelizable: clasificacion.paralelizable,
+        proyectoId: proyecto.id,
+      });
+      await recordarUltimaTarea(chatId, id);
+
+      await enviarMensaje(
+        chatId,
+        `✅ Añadida a ${proyecto.nombre}: ${clasificacion.titulo}`,
+      );
+      return Response.json({ ok: true, comando: "anadir_a_proyecto" });
+    }
+
+    if (comando?.tipo === "borrar_ultima") {
+      const recordada = estado?.ultima_tarea_id
+        ? await tareaPorId(estado.ultima_tarea_id)
+        : null;
+      const tarea = recordada ?? (await tareaMasReciente());
+
+      if (!tarea) {
+        await enviarMensaje(chatId, "No encuentro ninguna tarea que borrar.");
+        return Response.json({ ok: true, comando: "borrar_ultima" });
+      }
+
+      await borrarTarea(tarea.id);
+      await enviarMensaje(chatId, `🗑️ Eliminada: ${tarea.titulo}`);
+      return Response.json({ ok: true, eliminada: true });
+    }
+
+    if (comando?.tipo === "borrar_tarea") {
+      const buscado = normalizarNombre(comando.texto);
+      const pendientes = await listarPendientesTodas();
+      const coincidencias = pendientes.filter((t) =>
+        normalizarNombre(t.titulo).includes(buscado),
+      );
+
+      if (coincidencias.length === 0) {
+        await enviarMensaje(
+          chatId,
+          `No encuentro ninguna tarea pendiente con «${comando.texto}».`,
+        );
+        return Response.json({ ok: true, comando: "borrar_tarea" });
+      }
+
+      if (coincidencias.length === 1) {
+        await borrarTarea(coincidencias[0].id);
+        await enviarMensaje(
+          chatId,
+          `🗑️ Eliminada: ${coincidencias[0].titulo}`,
+        );
+        return Response.json({ ok: true, eliminada: true });
+      }
+
+      await guardarEstado(chatId, {
+        accion: "borrar_elegir",
+        datos: { ids: coincidencias.map((t) => t.id) },
+      });
+      await enviarMensaje(chatId, listadoParaBorrar(coincidencias));
+      return Response.json({ ok: true, pregunta: true });
+    }
+
+    if (comando?.tipo === "borrar_generico") {
+      const pendientes = await listarPendientesTodas();
+      if (pendientes.length === 0) {
+        await enviarMensaje(chatId, "No hay tareas pendientes que borrar.");
+        return Response.json({ ok: true, comando: "borrar_generico" });
+      }
+
+      await guardarEstado(chatId, { accion: "borrar_columna", datos: {} });
+      await enviarMensaje(chatId, pedirColumna());
+      return Response.json({ ok: true, pregunta: true });
+    }
+
+    // ---------------------------------------------------------------
+    // Tarea esperando destino
+    // ---------------------------------------------------------------
     pendiente = await obtenerPendiente(chatId);
 
-    // Hay una tarea esperando destino: este mensaje es la respuesta.
     if (pendiente) {
       const tituloPendiente = pendiente.titulo;
       const destino = await interpretarDestino(texto, nombres, tituloPendiente);
@@ -211,32 +553,57 @@ export async function POST(request: Request) {
         return Response.json({ ok: true, pregunta: true });
       }
 
-      const proyecto =
-        destino.accion === "proyecto" && destino.proyecto
-          ? await resolverProyecto(destino.proyecto, listaProyectos)
-          : null;
+      if (destino.accion === "proyecto" && destino.proyecto) {
+        const proyecto = buscarProyecto(destino.proyecto, listaProyectos);
+        if (!proyecto) {
+          await enviarMensaje(
+            chatId,
+            `No existe el proyecto «${destino.proyecto}» y no lo creo sin que me lo pidas.\nDime «crea el proyecto ${destino.proyecto}» o elige «hoy» / «mañana» / «esta semana».`,
+          );
+          return Response.json({ ok: true, pregunta: true });
+        }
 
-      await insertarTarea({
+        const id = await insertarTarea({
+          titulo: pendiente.titulo,
+          detalle: pendiente.detalle,
+          tipo: "proyecto",
+          duracion: pendiente.duracion_estimada_min,
+          paralelizable: pendiente.paralelizable,
+          proyectoId: proyecto.id,
+        });
+        await borrarPendiente(pendiente.id);
+        pendiente = null;
+        await recordarUltimaTarea(chatId, id);
+        await enviarMensaje(
+          chatId,
+          `✅ Añadida a ${proyecto.nombre}: ${tituloPendiente}`,
+        );
+        return Response.json({ ok: true, desdePendiente: true });
+      }
+
+      const tipo = destino.accion as Tipo;
+      const id = await insertarTarea({
         titulo: pendiente.titulo,
         detalle: pendiente.detalle,
-        tipo: destino.accion as Tipo,
+        tipo,
         duracion: pendiente.duracion_estimada_min,
         paralelizable: pendiente.paralelizable,
-        proyectoId: proyecto?.id ?? null,
+        proyectoId: null,
       });
-
       await borrarPendiente(pendiente.id);
       pendiente = null;
+      await recordarUltimaTarea(chatId, id);
 
-      const donde = proyecto?.nombre ?? ETIQUETA_TIPO[destino.accion] ?? "tu lista";
+      const donde = ETIQUETA_TIPO[tipo] ?? "tu lista";
       await enviarMensaje(chatId, `✅ Añadida a ${donde}: ${tituloPendiente}`);
-
       return Response.json({ ok: true, desdePendiente: true });
     }
 
+    // ---------------------------------------------------------------
+    // Nota nueva
+    // ---------------------------------------------------------------
     const clasificacion = await clasificarTarea(texto, nombres);
 
-    // Sin pistas de cuándo ni dónde: preguntamos y la guardamos en espera.
     if (!clasificacion.destino_claro && !clasificacion.proyecto_sugerido) {
       await guardarPendiente(chatId, clasificacion, texto);
       await enviarMensaje(
@@ -246,11 +613,12 @@ export async function POST(request: Request) {
       return Response.json({ ok: true, pregunta: true });
     }
 
+    // Los proyectos solo se crean si lo pides: aquí solo se busca uno existente.
     const proyecto = clasificacion.proyecto_sugerido
-      ? await resolverProyecto(clasificacion.proyecto_sugerido, listaProyectos)
-      : null;
+      ? buscarProyecto(clasificacion.proyecto_sugerido, listaProyectos)
+      : undefined;
 
-    await insertarTarea({
+    const id = await insertarTarea({
       titulo: clasificacion.titulo,
       detalle: clasificacion.detalle,
       tipo: clasificacion.tipo,
@@ -258,16 +626,14 @@ export async function POST(request: Request) {
       paralelizable: clasificacion.paralelizable,
       proyectoId: proyecto?.id ?? null,
     });
+    await recordarUltimaTarea(chatId, id);
 
-    const destino =
+    const donde =
       clasificacion.tipo === "proyecto" && proyecto
         ? proyecto.nombre
         : (ETIQUETA_TIPO[clasificacion.tipo] ?? clasificacion.tipo);
 
-    await enviarMensaje(
-      chatId,
-      `✅ Añadida a ${destino}: ${clasificacion.titulo}`,
-    );
+    await enviarMensaje(chatId, `✅ Añadida a ${donde}: ${clasificacion.titulo}`);
 
     return Response.json({ ok: true });
   } catch (error) {

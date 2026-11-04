@@ -55,6 +55,17 @@ create unique index if not exists tareas_pendientes_chat_idx
 -- Solo la usa el servidor (webhook), con la API_KEY de admin.
 alter table public.tareas_pendientes enable row level security;
 
+-- Conversación abierta con el bot y memoria de la última tarea creada.
+create table if not exists public.estados_chat (
+  chat_id text primary key,
+  accion text,
+  datos jsonb not null default '{}'::jsonb,
+  ultima_tarea_id uuid references public.tareas (id) on delete set null,
+  actualizado_at timestamptz not null default now()
+);
+
+alter table public.estados_chat enable row level security;
+
 create index if not exists tareas_tipo_estado_idx on public.tareas (tipo, estado);
 create index if not exists tareas_proyecto_idx on public.tareas (proyecto_id);
 create index if not exists tareas_fecha_para_idx on public.tareas (fecha_para);
