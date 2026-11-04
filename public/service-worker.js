@@ -1,10 +1,10 @@
 /* Service worker del panel: shell offline + estáticos con caché. */
-const VERSION = "task-dashboard-v2";
+const VERSION = "task-dashboard-v3";
 const SHELL = [
   "/",
   "/offline.html",
-  "/icons/icon-192-v2.png",
-  "/icons/icon-512-v2.png",
+  "/icons/icon-192-v3.png",
+  "/icons/icon-512-v3.png",
 ];
 
 self.addEventListener("install", (event) => {

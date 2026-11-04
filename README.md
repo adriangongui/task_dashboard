@@ -74,7 +74,7 @@ El panel es una PWA: se instala desde el navegador y se abre a pantalla completa
 
 Si Chrome dice que no se puede instalar, suele ser caché de un despliegue anterior: recarga forzada (o borra datos del sitio) y vuelve a probar. Los iconos y el service worker llevan nombres versionados (`-v2`, `service-worker.js`) justo para esquivar esos 404 cacheados.
 
-En producción funciona sobre el HTTPS de Vercel; en local basta con `localhost`. El manifest está en `app/manifest.ts`, los iconos se generan con `node scripts/generar-iconos.mjs` y el service worker (`public/sw.js`) guarda el shell para abrir el panel sin conexión (las tareas se piden a InsForge, así que sin red se ve la última carga).
+En producción funciona sobre el HTTPS de Vercel; en local basta con `localhost`. El manifest está en `app/manifest.ts`, los iconos se generan desde `public/icons/app-icon.png` con `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generar-iconos.ps1` y el service worker (`public/service-worker.js`) guarda el shell para abrir el panel sin conexión (las tareas se piden a InsForge, así que sin red se ve la última carga).
 
 ## 4. Crear el bot de Telegram y configurar el webhook
 
@@ -174,7 +174,7 @@ app/
 public/
   sw.js                           # service worker (shell offline)
   offline.html                    # aviso sin conexión
-  icons/ y apple-touch-icon.png   # iconos generados por el script
+  icons/ y apple-touch-icon-v3.png # iconos generados desde el diseño
 components/
   Dashboard.tsx                   # estado, mutaciones y layout responsive
   AppHeader.tsx                   # saludo, fecha y "Proponer plan"
@@ -193,7 +193,7 @@ lib/
   pending.ts                      # notas esperando que el usuario diga el destino
 insforge/schema.sql
 insforge/migrations/              # cambios aplicados sobre una base existente
-scripts/generar-iconos.mjs       # regenera los iconos PNG de la PWA
+scripts/generar-iconos.ps1       # regenera los iconos PNG desde public/icons/app-icon.png
 ```
 
 ## Notas
