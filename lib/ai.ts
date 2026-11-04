@@ -1,4 +1,5 @@
 import { interpretarDestinoRapido, normalizarTexto } from "./destino";
+import { limpiarTitulo } from "./titulo";
 import type { Clasificacion, DestinoResuelto, Tipo } from "./types";
 
 const MODELO_POR_DEFECTO = "openai/gpt-oss-120b";
@@ -54,6 +55,7 @@ Reglas de "paralelizable":
 
 Otras reglas:
 - "titulo" siempre en imperativo y sin punto final.
+- "titulo" es SOLO la accion: quita las expresiones de cuando o donde ("hoy", "manana", "para esta semana", "el lunes", "en el proyecto X"). Esas solo sirven para elegir "tipo" y "proyecto_sugerido". Ejemplo: "jugar al roblox para esta semana" -> titulo "Jugar al Roblox", tipo "semana".
 - "detalle" conserva TODA la información del texto original; solo corrige puntuación, muletillas y transcripción.
 - "duracion_estimada_min" es tu mejor estimación realista en minutos; null solo si es imposible deducirla.
 - "proyecto_sugerido" debe coincidir con un nombre de la lista de proyectos existentes, o ser un nombre corto de proyecto nuevo si el texto pertenece claramente a uno que no está en la lista. Si no aplica, null.`;
@@ -121,10 +123,13 @@ async function pedirJSON(sistema: string, usuario: string): Promise<unknown> {
 function normalizar(datos: unknown, textoOriginal: string): Clasificacion {
   const d = (datos ?? {}) as Record<string, unknown>;
 
-  const titulo =
+  const tituloBruto =
     typeof d.titulo === "string" && d.titulo.trim().length > 0
-      ? d.titulo.trim().slice(0, 120)
+      ? d.titulo.trim()
       : textoOriginal.trim().split(/\s+/).slice(0, 8).join(" ");
+
+  // La coletilla de tiempo elige columna, no forma parte del título.
+  const titulo = limpiarTitulo(tituloBruto).slice(0, 120);
 
   const tipo = TIPOS_VALIDOS.includes(d.tipo as Tipo)
     ? (d.tipo as Tipo)
