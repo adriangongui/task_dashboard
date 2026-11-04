@@ -10,6 +10,7 @@ interface Props {
   sugeridas: Set<string>;
   expandidos: Set<string>;
   onAlternarProyecto: (id: string) => void;
+  onAbrirProyecto: (proyecto: Proyecto) => void;
   onToggleTarea: (tarea: Tarea) => void;
   onAbrirTarea: (tarea: Tarea) => void;
   zonaActiva?: string | null;
@@ -27,6 +28,7 @@ export default function ProjectsColumn({
   sugeridas,
   expandidos,
   onAlternarProyecto,
+  onAbrirProyecto,
   onToggleTarea,
   onAbrirTarea,
   zonaActiva,
@@ -65,29 +67,62 @@ export default function ProjectsColumn({
                 : "border-line",
             ].join(" ")}
           >
-            <button
-              type="button"
-              onClick={() => onAlternarProyecto(proyecto.id)}
-              aria-expanded={abierto}
-              className="w-full px-3.5 pb-3 pt-3.5 text-left transition hover:bg-canvas/60"
-            >
-              <div className="flex items-center gap-2">
-                <span
-                  aria-hidden="true"
-                  className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ backgroundColor: proyecto.color }}
-                />
-                <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium">
-                  {proyecto.nombre}
-                </span>
-                <span className="shrink-0 text-[11px] tabular-nums text-muted">
-                  {hechas}/{total}
-                </span>
+            <div className="flex items-start gap-1 px-1.5 pb-1 pt-1.5">
+              <button
+                type="button"
+                onClick={() => onAbrirProyecto(proyecto)}
+                aria-label={`Abrir detalle de ${proyecto.nombre}`}
+                className="min-w-0 flex-1 rounded-[10px] px-2 pb-1.5 pt-2 text-left transition hover:bg-canvas/60"
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    aria-hidden="true"
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: proyecto.color }}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium">
+                    {proyecto.nombre}
+                  </span>
+                  <span className="shrink-0 text-[11px] tabular-nums text-muted">
+                    {hechas}/{total}
+                  </span>
+                </div>
+
+                <div className="mt-2.5 h-[6px] overflow-hidden rounded-full bg-[#EFEDE7]">
+                  <div
+                    className="h-full rounded-full transition-[width] duration-500"
+                    style={{
+                      width: `${pct}%`,
+                      backgroundColor: proyecto.color,
+                    }}
+                  />
+                </div>
+
+                <div className="mt-1.5 flex items-center justify-between text-[11px] text-muted">
+                  <span>
+                    {pendientes.length}{" "}
+                    {pendientes.length === 1 ? "pendiente" : "pendientes"}
+                  </span>
+                  <span className="tabular-nums">{pct}%</span>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onAlternarProyecto(proyecto.id)}
+                aria-expanded={abierto}
+                aria-label={
+                  abierto
+                    ? `Ocultar tareas de ${proyecto.nombre}`
+                    : `Ver tareas de ${proyecto.nombre}`
+                }
+                className="mt-0.5 shrink-0 rounded-full p-2 text-muted transition hover:bg-canvas hover:text-ink"
+              >
                 <svg
                   aria-hidden="true"
                   viewBox="0 0 20 20"
                   className={[
-                    "h-3.5 w-3.5 shrink-0 text-muted transition-transform",
+                    "h-3.5 w-3.5 transition-transform",
                     abierto ? "rotate-180" : "",
                   ].join(" ")}
                   fill="none"
@@ -98,26 +133,8 @@ export default function ProjectsColumn({
                 >
                   <path d="M5 8l5 5 5-5" />
                 </svg>
-              </div>
-
-              <div className="mt-2.5 h-[6px] overflow-hidden rounded-full bg-[#EFEDE7]">
-                <div
-                  className="h-full rounded-full transition-[width] duration-500"
-                  style={{
-                    width: `${pct}%`,
-                    backgroundColor: proyecto.color,
-                  }}
-                />
-              </div>
-
-              <div className="mt-1.5 flex items-center justify-between text-[11px] text-muted">
-                <span>
-                  {pendientes.length}{" "}
-                  {pendientes.length === 1 ? "pendiente" : "pendientes"}
-                </span>
-                <span className="tabular-nums">{pct}%</span>
-              </div>
-            </button>
+              </button>
+            </div>
 
             {abierto ? (
               <div className="flex flex-col gap-2 border-t border-line bg-canvas/40 p-2.5">

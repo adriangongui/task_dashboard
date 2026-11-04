@@ -22,6 +22,7 @@ import StatsRow from "./StatsRow";
 import TaskCard from "./TaskCard";
 import TaskDetailPanel from "./TaskDetailPanel";
 import NewTaskPanel from "./NewTaskPanel";
+import ProjectDetailPanel from "./ProjectDetailPanel";
 
 type TabKey = "hoy" | "manana" | "semana" | "proyectos" | "sin_terminar";
 type DestinoArrastre = "hoy" | "manana" | "semana" | "sin_terminar";
@@ -103,6 +104,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<TabKey>("hoy");
   const [abierta, setAbierta] = useState<Tarea | null>(null);
+  const [proyectoAbierto, setProyectoAbierto] = useState<Proyecto | null>(null);
   const [plan, setPlan] = useState<PlanDia | null>(null);
   const [proponiendo, setProponiendo] = useState(false);
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
@@ -455,6 +457,55 @@ export default function Dashboard() {
     setAviso("Tarea eliminada");
   }, []);
 
+  const abrirProyecto = useCallback((proyecto: Proyecto) => {
+    setProyectoAbierto(proyecto);
+    setAbierta(null);
+  }, []);
+
+  const guardarNombreProyecto = useCallback(
+    async (proyecto: Proyecto, nombre: string) => {
+      const { data, error: errorUpdate } = await insforgeBrowser()
+        .database.from("proyectos")
+        .update({ nombre })
+        .eq("id", proyecto.id)
+        .select("*")
+        .single();
+      if (errorUpdate) throw errorUpdate;
+
+      const actualizado = data as Proyecto;
+      setProyectos((prev) =>
+        prev.map((p) => (p.id === proyecto.id ? actualizado : p)),
+      );
+      setProyectoAbierto((prev) =>
+        prev && prev.id === proyecto.id ? actualizado : prev,
+      );
+      setAviso("Proyecto actualizado");
+    },
+    [],
+  );
+
+  const eliminarProyecto = useCallback(async (proyecto: Proyecto) => {
+    const { error: errorDelete } = await insforgeBrowser()
+      .database.from("proyectos")
+      .delete()
+      .eq("id", proyecto.id);
+    if (errorDelete) throw errorDelete;
+
+    setProyectos((prev) => prev.filter((p) => p.id !== proyecto.id));
+    setTareas((prev) =>
+      prev.map((t) =>
+        t.proyecto_id === proyecto.id ? { ...t, proyecto_id: null } : t,
+      ),
+    );
+    setExpandidos((prev) => {
+      const siguiente = new Set(prev);
+      siguiente.delete(proyecto.id);
+      return siguiente;
+    });
+    setProyectoAbierto(null);
+    setAviso("Proyecto eliminado; sus tareas pasan a «Sin proyecto»");
+  }, []);
+
   const crearTarea = useCallback(async (datos: NuevaTarea) => {
     const { data, error: errorInsert } = await insforgeBrowser()
       .database.from("tareas")
@@ -776,6 +827,7 @@ export default function Dashboard() {
                   sugeridas={sugeridas}
                   expandidos={expandidos}
                   onAlternarProyecto={alternarProyecto}
+                  onAbrirProyecto={abrirProyecto}
                   onToggleTarea={alternarHecha}
                   onAbrirTarea={abrirTarea}
                   zonaActiva={zonaActiva}
@@ -817,6 +869,19 @@ export default function Dashboard() {
           tareas={hechasRecientes}
           proyectos={proyectosPorId}
           onCerrar={() => setHechasAbiertas(false)}
+        />
+      ) : null}
+
+      {proyectoAbierto ? (
+        <ProjectDetailPanel
+          key={proyectoAbierto.id}
+          proyecto={proyectoAbierto}
+          tareas={tareas.filter(
+            (t) => t.proyecto_id === proyectoAbierto.id,
+          )}
+          onCerrar={() => setProyectoAbierto(null)}
+          onGuardarNombre={guardarNombreProyecto}
+          onEliminar={eliminarProyecto}
         />
       ) : null}
 
