@@ -87,8 +87,11 @@ function Guardar-Icono {
 
 Guardar-Icono -Tam 192 -Escala 1.0 -ConFondo $false -Ruta (Join-Path $raiz "public\icons\icon-192-v3.png")
 Guardar-Icono -Tam 512 -Escala 1.0 -ConFondo $false -Ruta (Join-Path $raiz "public\icons\icon-512-v3.png")
-Guardar-Icono -Tam 512 -Escala 1.02 -ConFondo $true -Ruta (Join-Path $raiz "public\icons\icon-maskable-512-v3.png")
-Guardar-Icono -Tam 180 -Escala 1.02 -ConFondo $true -Ruta (Join-Path $raiz "public\apple-touch-icon-v3.png")
+# A sangre: el diseno ocupa todo el lienzo (sin fondo plano que cante) y el
+# contenido sigue dentro de la zona segura del icono maskable.
+Guardar-Icono -Tam 512 -Escala 1.25 -ConFondo $false -Ruta (Join-Path $raiz "public\icons\icon-maskable-512-v3.png")
+# iOS no admite transparencia en el icono de inicio: fondo opaco.
+Guardar-Icono -Tam 180 -Escala 1.25 -ConFondo $true -Ruta (Join-Path $raiz "public\apple-touch-icon-v3.png")
 Guardar-Icono -Tam 256 -Escala 1.0 -ConFondo $false -Ruta (Join-Path $raiz "app\icon.png")
 
 $limpio.Dispose()
