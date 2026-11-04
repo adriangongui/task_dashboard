@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { parsearTiempo } from "@/lib/duration";
-import InstallButton from "./InstallButton";
 
 interface Props {
   saludo: string;
@@ -98,8 +97,6 @@ export default function AppHeader({
               </span>
             ) : null}
           </button>
-
-          <InstallButton />
         </div>
 
         <form onSubmit={enviar} className="w-full lg:w-[380px]">

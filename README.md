@@ -69,7 +69,7 @@ Abre la URL que imprime Next.js (normalmente `http://localhost:3000`).
 
 El panel es una PWA: se instala desde el navegador y se abre a pantalla completa, sin barra de direcciones.
 
-- **Android (Chrome/Edge)**: menú ⋮ → «Instalar aplicación» (o «Añadir a pantalla de inicio»). También aparece un botón **«Instalar app»** en la cabecera cuando el navegador da luz verde.
+- **Android (Chrome/Edge)**: menú ⋮ → «Instalar aplicación» (o «Añadir a pantalla de inicio»).
 - **iPhone/iPad (Safari)**: botón Compartir → «Añadir a pantalla de inicio».
 
 Si Chrome dice que no se puede instalar, suele ser caché de un despliegue anterior: recarga forzada (o borra datos del sitio) y vuelve a probar. Los iconos y el service worker llevan nombres versionados (`-v2`, `service-worker.js`) justo para esquivar esos 404 cacheados.
