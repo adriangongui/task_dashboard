@@ -9,6 +9,7 @@ interface Props {
   pendientesHoy: number;
   proponiendo: boolean;
   onProponerPlan: (minutos: number) => void;
+  onNuevaTarea: () => void;
 }
 
 export default function AppHeader({
@@ -17,6 +18,7 @@ export default function AppHeader({
   pendientesHoy,
   proponiendo,
   onProponerPlan,
+  onNuevaTarea,
 }: Props) {
   const [tiempo, setTiempo] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +49,25 @@ export default function AppHeader({
               ? `${pendientesHoy} ${pendientesHoy === 1 ? "tarea" : "tareas"} pendientes para hoy.`
               : "No tienes nada pendiente para hoy."}
           </p>
+
+          <button
+            type="button"
+            onClick={onNuevaTarea}
+            className="mt-4 inline-flex items-center gap-1.5 rounded-[11px] bg-ink px-3.5 py-2 text-[13px] font-medium text-white transition hover:bg-[#111110]"
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 20 20"
+              className="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
+              <path d="M10 4.5v11M4.5 10h11" />
+            </svg>
+            Nueva tarea
+          </button>
         </div>
 
         <form onSubmit={enviar} className="w-full lg:w-[380px]">

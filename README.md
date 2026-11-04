@@ -3,7 +3,7 @@
 Sistema personal de gestión de tareas con dos caras:
 
 - **Bot de Telegram** (`/api/telegram/webhook`): mandas una nota de texto (o una transcripción de voz) y Groq la convierte en una tarea con título corto, tipo, duración estimada, si es paralelizable y proyecto.
-- **Panel web** (Next.js 14 App Router + InsForge): columnas Hoy / Esta semana / Proyectos futuros / Sin terminar, progreso por proyecto, detalle en panel lateral y plan del día según el tiempo que tengas.
+- **Panel web** (Next.js 14 App Router + InsForge): columnas Hoy / Esta semana / Proyectos futuros / Sin terminar, progreso por proyecto, detalle en panel lateral, plan del día según el tiempo que tengas y alta manual de tareas eligiendo destino.
 
 ```
 Telegram  →  /api/telegram/webhook  →  Groq (clasifica)  →  InsForge (Postgres)
@@ -161,6 +161,7 @@ components/
   StatsRow.tsx                    # hechas hoy, racha, activas, sin terminar
   TaskCard.tsx                    # checkbox, badges, reasignación rápida
   TaskDetailPanel.tsx             # detalle completo + editar duración
+  NewTaskPanel.tsx                # alta manual: título, detalle, destino, proyecto, duración
   ProjectsColumn.tsx              # barras de progreso y proyectos expandibles
 lib/
   ai.ts                           # llamada a Groq + prompt JSON
@@ -176,4 +177,5 @@ insforge/schema.sql
 
 - El panel usa un único árbol de componentes: en escritorio se convierte en grid de 4 columnas; en móvil (`< 1024px`) muestra pestañas horizontales con scroll y solo la sección activa. La lógica no está duplicada.
 - No hay backend propio para leer datos: el navegador habla directo con InsForge usando la anon key.
+- «Nueva tarea» abre un panel para crear tareas sin pasar por Telegram: eliges Hoy, Esta semana o un proyecto (creándolo si escribes uno nuevo), con duración y si es paralelizable. Las de Hoy se guardan con `fecha_para` = hoy.
 - El clasificador usa Groq (`https://api.groq.com/openai/v1/chat/completions`) en modo JSON. Cambia el modelo con `GROQ_MODEL`; el valor por defecto es `openai/gpt-oss-120b` (comprueba con `GET /openai/v1/models` qué modelos expone tu cuenta).

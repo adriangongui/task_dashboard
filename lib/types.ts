@@ -9,6 +9,15 @@ export interface Proyecto {
   created_at: string;
 }
 
+export interface NuevaTarea {
+  titulo: string;
+  detalle: string;
+  tipo: Tipo;
+  proyecto_id: string | null;
+  duracion_estimada_min: number | null;
+  paralelizable: boolean;
+}
+
 export interface Tarea {
   id: string;
   titulo: string;

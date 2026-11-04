@@ -4,13 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { calcRacha, completadaHoy, fechaLarga, hoyISO, horaLocal, saludo } from "@/lib/dates";
 import { formatMin } from "@/lib/duration";
 import type { PlanDia } from "@/lib/plan";
-import type { Proyecto, Tarea } from "@/lib/types";
+import type { NuevaTarea, Proyecto, Tarea } from "@/lib/types";
 import { insforgeBrowser, insforgeConfigurado } from "@/lib/insforge/client";
 import AppHeader from "./AppHeader";
 import ProjectsColumn from "./ProjectsColumn";
 import StatsRow from "./StatsRow";
 import TaskCard from "./TaskCard";
 import TaskDetailPanel from "./TaskDetailPanel";
+import NewTaskPanel from "./NewTaskPanel";
 
 type TabKey = "hoy" | "semana" | "proyectos" | "sin_terminar";
 
@@ -61,6 +62,7 @@ export default function Dashboard() {
   const [plan, setPlan] = useState<PlanDia | null>(null);
   const [proponiendo, setProponiendo] = useState(false);
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
+  const [creando, setCreando] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const [encabezado, setEncabezado] = useState<{ saludo: string; fecha: string }>({
     saludo: "",
@@ -192,6 +194,45 @@ export default function Dashboard() {
     [actualizarTarea],
   );
 
+  const crearTarea = useCallback(async (datos: NuevaTarea) => {
+    const { data, error: errorInsert } = await insforgeBrowser()
+      .database.from("tareas")
+      .insert([
+        {
+          titulo: datos.titulo,
+          detalle: datos.detalle,
+          tipo: datos.tipo,
+          estado: "pendiente",
+          duracion_estimada_min: datos.duracion_estimada_min,
+          paralelizable: datos.paralelizable,
+          proyecto_id: datos.proyecto_id,
+          fecha_para: datos.tipo === "hoy" ? hoyISO() : null,
+        },
+      ])
+      .select();
+
+    if (errorInsert) throw errorInsert;
+
+    const nueva = (data as Tarea[] | null)?.[0];
+    if (!nueva) throw new Error("No se pudo crear la tarea");
+
+    setTareas((prev) => [nueva, ...prev]);
+
+    if (datos.tipo === "proyecto") {
+      setTab("proyectos");
+      if (datos.proyecto_id) {
+        setExpandidos((prev) => new Set(prev).add(datos.proyecto_id as string));
+      }
+      setAviso("Tarea añadida a Proyectos");
+    } else if (datos.tipo === "semana") {
+      setTab("semana");
+      setAviso("Tarea añadida a Esta semana");
+    } else {
+      setTab("hoy");
+      setAviso("Tarea añadida a Hoy");
+    }
+  }, []);
+
   const proponerPlan = useCallback(async (minutos: number) => {
     setProponiendo(true);
     try {
@@ -318,6 +359,7 @@ export default function Dashboard() {
         pendientesHoy={pendientesHoy.length}
         proponiendo={proponiendo}
         onProponerPlan={proponerPlan}
+        onNuevaTarea={() => setCreando(true)}
       />
 
       {plan ? (
@@ -457,6 +499,14 @@ export default function Dashboard() {
           );
         })}
       </div>
+
+      {creando ? (
+        <NewTaskPanel
+          proyectos={proyectos}
+          onCerrar={() => setCreando(false)}
+          onCrear={crearTarea}
+        />
+      ) : null}
 
       {abierta ? (
         <TaskDetailPanel
