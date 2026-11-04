@@ -1,19 +1,40 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { calcRacha, completadaHoy, fechaLarga, hoyISO, horaLocal, saludo } from "@/lib/dates";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  addDias,
+  calcRacha,
+  completadaHoy,
+  fechaLarga,
+  hoyISO,
+  horaLocal,
+  mananaISO,
+  saludo,
+} from "@/lib/dates";
 import { formatMin } from "@/lib/duration";
 import type { PlanDia } from "@/lib/plan";
 import type { NuevaTarea, Proyecto, Tarea } from "@/lib/types";
 import { insforgeBrowser, insforgeConfigurado } from "@/lib/insforge/client";
 import AppHeader from "./AppHeader";
+import HechasPanel from "./HechasPanel";
 import ProjectsColumn from "./ProjectsColumn";
 import StatsRow from "./StatsRow";
 import TaskCard from "./TaskCard";
 import TaskDetailPanel from "./TaskDetailPanel";
 import NewTaskPanel from "./NewTaskPanel";
 
-type TabKey = "hoy" | "semana" | "proyectos" | "sin_terminar";
+type TabKey = "hoy" | "manana" | "semana" | "proyectos" | "sin_terminar";
+type DestinoArrastre = "hoy" | "manana" | "semana" | "sin_terminar";
+
+interface Armado {
+  id: string;
+  titulo: string;
+  tipo: string;
+  startX: number;
+  startY: number;
+  activo: boolean;
+  timer: number | null;
+}
 
 const SECCIONES: Array<{
   key: TabKey;
@@ -28,6 +49,13 @@ const SECCIONES: Array<{
     corto: "Hoy",
     color: "#5B5DD6",
     vacio: "Nada para hoy. Manda una tarea por Telegram cuando surja.",
+  },
+  {
+    key: "manana",
+    titulo: "Mañana",
+    corto: "Mañana",
+    color: "#C08A2E",
+    vacio: "Nada para mañana: arrastra una tarea aquí o créala con destino Mañana.",
   },
   {
     key: "semana",
@@ -52,6 +80,13 @@ const SECCIONES: Array<{
   },
 ];
 
+const NOMBRE_DESTINO: Record<DestinoArrastre, string> = {
+  hoy: "Hoy",
+  manana: "Mañana",
+  semana: "Esta semana",
+  sin_terminar: "Sin terminar",
+};
+
 export default function Dashboard() {
   const [tareas, setTareas] = useState<Tarea[]>([]);
   const [proyectos, setProyectos] = useState<Proyecto[]>([]);
@@ -63,11 +98,19 @@ export default function Dashboard() {
   const [proponiendo, setProponiendo] = useState(false);
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [creando, setCreando] = useState(false);
+  const [hechasAbiertas, setHechasAbiertas] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
+  const [arrastre, setArrastre] = useState<{ titulo: string; x: number; y: number } | null>(
+    null,
+  );
+  const [zonaActiva, setZonaActiva] = useState<string | null>(null);
   const [encabezado, setEncabezado] = useState<{ saludo: string; fecha: string }>({
     saludo: "",
     fecha: "",
   });
+
+  const armado = useRef<Armado | null>(null);
+  const clickSuprimido = useRef(false);
 
   useEffect(() => {
     const ahora = new Date();
@@ -127,9 +170,7 @@ export default function Dashboard() {
         .single();
       if (errorUpdate) throw errorUpdate;
       const actualizada = data as Tarea;
-      setTareas((prev) =>
-        prev.map((t) => (t.id === id ? actualizada : t)),
-      );
+      setTareas((prev) => prev.map((t) => (t.id === id ? actualizada : t)));
       setAbierta((prev) => (prev && prev.id === id ? actualizada : prev));
       return actualizada;
     },
@@ -165,19 +206,42 @@ export default function Dashboard() {
     [actualizarTarea],
   );
 
-  const reasignar = useCallback(
-    async (tarea: Tarea, destino: "hoy" | "semana") => {
+  const moverTarea = useCallback(
+    async (id: string, destino: string) => {
       try {
-        await actualizarTarea(tarea.id, {
-          tipo: destino,
-          estado: "pendiente",
-          fecha_para: destino === "hoy" ? hoyISO() : null,
-        });
-        setAviso(
-          destino === "hoy"
-            ? "Movida a Hoy"
-            : "Movida a Esta semana",
-        );
+        if (destino === "sin_terminar") {
+          await actualizarTarea(id, { estado: "sin_terminar" });
+          setAviso("Movida a Sin terminar");
+          return;
+        }
+
+        if (destino.startsWith("proyecto:")) {
+          const proyectoId = destino.slice("proyecto:".length);
+          await actualizarTarea(id, {
+            tipo: "proyecto",
+            estado: "pendiente",
+            proyecto_id: proyectoId,
+            fecha_para: null,
+          });
+          setExpandidos((prev) => new Set(prev).add(proyectoId));
+          setTab("proyectos");
+          setAviso("Movida a ese proyecto");
+          return;
+        }
+
+        if (destino === "hoy" || destino === "manana" || destino === "semana") {
+          await actualizarTarea(id, {
+            tipo: destino,
+            estado: "pendiente",
+            fecha_para:
+              destino === "hoy"
+                ? hoyISO()
+                : destino === "manana"
+                  ? mananaISO()
+                  : null,
+          });
+          setAviso(`Movida a ${NOMBRE_DESTINO[destino]}`);
+        }
       } catch (e) {
         setAviso(
           e instanceof Error ? `No se pudo mover: ${e.message}` : "No se pudo mover la tarea",
@@ -186,6 +250,136 @@ export default function Dashboard() {
     },
     [actualizarTarea],
   );
+
+  const limpiarArmado = useCallback(() => {
+    if (armado.current?.timer) window.clearTimeout(armado.current.timer);
+    armado.current = null;
+  }, []);
+
+  const activarArrastre = useCallback(() => {
+    const actual = armado.current;
+    if (!actual || actual.activo) return;
+    actual.activo = true;
+    if (actual.timer) {
+      window.clearTimeout(actual.timer);
+      actual.timer = null;
+    }
+    setArrastre({ titulo: actual.titulo, x: actual.startX, y: actual.startY });
+  }, []);
+
+  const agarrarTarea = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>, tarea: Tarea) => {
+      if (event.button !== 0) return;
+      if (
+        (event.target as HTMLElement).closest(
+          "button, a, input, select, textarea",
+        )
+      ) {
+        return;
+      }
+
+      limpiarArmado();
+
+      const base: Armado = {
+        id: tarea.id,
+        titulo: tarea.titulo,
+        tipo: event.pointerType,
+        startX: event.clientX,
+        startY: event.clientY,
+        activo: false,
+        timer: null,
+      };
+
+      // En pantalla táctil hace falta mantener pulsado para no bloquear el scroll.
+      if (event.pointerType !== "mouse") {
+        base.timer = window.setTimeout(activarArrastre, 320);
+      }
+
+      armado.current = base;
+    },
+    [activarArrastre, limpiarArmado],
+  );
+
+  useEffect(() => {
+    function destinoEn(x: number, y: number): string | null {
+      const elemento = document.elementFromPoint(x, y);
+      const zona = elemento?.closest("[data-destino]");
+      return zona?.getAttribute("data-destino") ?? null;
+    }
+
+    function alMover(event: PointerEvent) {
+      const actual = armado.current;
+      if (!actual) return;
+
+      if (!actual.activo) {
+        const distancia = Math.hypot(
+          event.clientX - actual.startX,
+          event.clientY - actual.startY,
+        );
+        if (actual.tipo === "mouse") {
+          if (distancia > 4) activarArrastre();
+        } else if (distancia > 10) {
+          limpiarArmado();
+        }
+        return;
+      }
+
+      if (event.cancelable) event.preventDefault();
+      setArrastre({ titulo: actual.titulo, x: event.clientX, y: event.clientY });
+      setZonaActiva(destinoEn(event.clientX, event.clientY));
+    }
+
+    function alSoltar(event: PointerEvent) {
+      const actual = armado.current;
+      if (!actual) return;
+
+      if (!actual.activo) {
+        limpiarArmado();
+        return;
+      }
+
+      const destino = destinoEn(event.clientX, event.clientY);
+      const id = actual.id;
+
+      clickSuprimido.current = true;
+      window.setTimeout(() => {
+        clickSuprimido.current = false;
+      }, 350);
+
+      limpiarArmado();
+      setArrastre(null);
+      setZonaActiva(null);
+
+      if (destino) void moverTarea(id, destino);
+    }
+
+    function alCancelar() {
+      limpiarArmado();
+      setArrastre(null);
+      setZonaActiva(null);
+    }
+
+    function alTocar(event: TouchEvent) {
+      if (armado.current?.activo && event.cancelable) event.preventDefault();
+    }
+
+    window.addEventListener("pointermove", alMover, { passive: false });
+    window.addEventListener("pointerup", alSoltar);
+    window.addEventListener("pointercancel", alCancelar);
+    window.addEventListener("touchmove", alTocar, { passive: false });
+
+    return () => {
+      window.removeEventListener("pointermove", alMover);
+      window.removeEventListener("pointerup", alSoltar);
+      window.removeEventListener("pointercancel", alCancelar);
+      window.removeEventListener("touchmove", alTocar);
+    };
+  }, [activarArrastre, limpiarArmado, moverTarea]);
+
+  const abrirTarea = useCallback((tarea: Tarea) => {
+    if (clickSuprimido.current) return;
+    setAbierta(tarea);
+  }, []);
 
   const guardarDuracion = useCallback(
     async (tarea: Tarea, minutos: number | null) => {
@@ -206,7 +400,12 @@ export default function Dashboard() {
           duracion_estimada_min: datos.duracion_estimada_min,
           paralelizable: datos.paralelizable,
           proyecto_id: datos.proyecto_id,
-          fecha_para: datos.tipo === "hoy" ? hoyISO() : null,
+          fecha_para:
+            datos.tipo === "hoy"
+              ? hoyISO()
+              : datos.tipo === "manana"
+                ? mananaISO()
+                : null,
         },
       ])
       .select();
@@ -227,6 +426,9 @@ export default function Dashboard() {
     } else if (datos.tipo === "semana") {
       setTab("semana");
       setAviso("Tarea añadida a Esta semana");
+    } else if (datos.tipo === "manana") {
+      setTab("manana");
+      setAviso("Tarea añadida a Mañana");
     } else {
       setTab("hoy");
       setAviso("Tarea añadida a Hoy");
@@ -264,8 +466,12 @@ export default function Dashboard() {
   const hoy = useMemo(() => hoyISO(), []);
 
   const pendientesHoy = useMemo(
+    () => tareas.filter((t) => t.tipo === "hoy" && t.estado === "pendiente"),
+    [tareas],
+  );
+  const pendientesManana = useMemo(
     () =>
-      tareas.filter((t) => t.tipo === "hoy" && t.estado === "pendiente"),
+      tareas.filter((t) => t.tipo === "manana" && t.estado === "pendiente"),
     [tareas],
   );
   const pendientesSemana = useMemo(
@@ -278,16 +484,23 @@ export default function Dashboard() {
     [tareas],
   );
 
+  const hechasRecientes = useMemo(() => {
+    const desde = addDias(hoy, -2);
+    return tareas.filter(
+      (t) =>
+        t.estado === "hecha" &&
+        t.completed_at &&
+        hoyISO(new Date(t.completed_at)) >= desde,
+    );
+  }, [tareas, hoy]);
+
   const proyectosPorId = useMemo(() => {
     const mapa = new Map<string, Proyecto>();
     proyectos.forEach((p) => mapa.set(p.id, p));
     return mapa;
   }, [proyectos]);
 
-  const sugeridas = useMemo(
-    () => new Set(plan?.sugeridas ?? []),
-    [plan],
-  );
+  const sugeridas = useMemo(() => new Set(plan?.sugeridas ?? []), [plan]);
 
   const stats = useMemo(
     () => [
@@ -304,10 +517,12 @@ export default function Dashboard() {
         hint: calcRacha(tareas, hoy) === 1 ? "día seguido" : "días seguidos",
       },
       {
-        label: "Activas esta semana",
-        value: String(pendientesHoy.length + pendientesSemana.length),
+        label: "Activas",
+        value: String(
+          pendientesHoy.length + pendientesManana.length + pendientesSemana.length,
+        ),
         accent: "#5B5DD6",
-        hint: "hoy y semana",
+        hint: "hoy, mañana y semana",
       },
       {
         label: "Sin terminar",
@@ -316,11 +531,19 @@ export default function Dashboard() {
         hint: "pendientes de reasignar",
       },
     ],
-    [tareas, hoy, pendientesHoy.length, pendientesSemana.length, sinTerminar.length],
+    [
+      tareas,
+      hoy,
+      pendientesHoy.length,
+      pendientesManana.length,
+      pendientesSemana.length,
+      sinTerminar.length,
+    ],
   );
 
   const cuenta: Record<TabKey, number> = {
     hoy: pendientesHoy.length,
+    manana: pendientesManana.length,
     semana: pendientesSemana.length,
     proyectos: proyectos.length,
     sin_terminar: sinTerminar.length,
@@ -345,8 +568,13 @@ export default function Dashboard() {
         }
         sugerida={sugeridas.has(tarea.id)}
         onToggle={alternarHecha}
-        onOpen={setAbierta}
-        onReasignar={conReasignar ? reasignar : undefined}
+        onOpen={abrirTarea}
+        onReasignar={
+          conReasignar
+            ? (_tarea, destino) => void moverTarea(_tarea.id, destino)
+            : undefined
+        }
+        onPointerDown={agarrarTarea}
       />
     ));
   }
@@ -360,6 +588,8 @@ export default function Dashboard() {
         proponiendo={proponiendo}
         onProponerPlan={proponerPlan}
         onNuevaTarea={() => setCreando(true)}
+        onVerHechas={() => setHechasAbiertas(true)}
+        hechasRecientes={hechasRecientes.length}
       />
 
       {plan ? (
@@ -397,7 +627,7 @@ export default function Dashboard() {
         </div>
       ) : null}
 
-      {/* Pestañas solo móvil; en escritorio se ven las cuatro columnas. */}
+      {/* Pestañas solo móvil; en escritorio se ven las cinco columnas. */}
       <div className="no-scrollbar -mx-4 mt-6 flex gap-1.5 overflow-x-auto px-4 pb-1 lg:hidden">
         {SECCIONES.map((seccion) => {
           const activa = tab === seccion.key;
@@ -428,23 +658,29 @@ export default function Dashboard() {
         })}
       </div>
 
-      <div className="mt-4 flex flex-col gap-6 lg:mt-6 lg:grid lg:grid-cols-4 lg:items-start lg:gap-6">
+      <div className="mt-4 flex flex-col gap-6 lg:mt-6 lg:grid lg:grid-cols-5 lg:items-start lg:gap-5">
         {SECCIONES.map((seccion) => {
           const visible = tab === seccion.key;
           const esProyectos = seccion.key === "proyectos";
           const lista =
             seccion.key === "hoy"
               ? pendientesHoy
-              : seccion.key === "semana"
-                ? pendientesSemana
-                : sinTerminar;
+              : seccion.key === "manana"
+                ? pendientesManana
+                : seccion.key === "semana"
+                  ? pendientesSemana
+                  : sinTerminar;
 
           return (
             <section
               key={seccion.key}
+              data-destino={esProyectos ? undefined : seccion.key}
               className={[
                 visible ? "" : "hidden",
-                "min-w-0 lg:block",
+                "min-w-0 rounded-card transition lg:block",
+                zonaActiva === seccion.key
+                  ? "bg-hoy/[0.05] ring-2 ring-hoy/25"
+                  : "",
               ].join(" ")}
               aria-label={seccion.titulo}
             >
@@ -458,12 +694,7 @@ export default function Dashboard() {
                   {seccion.titulo}
                 </h2>
                 <span className="text-[11px] tabular-nums text-muted">
-                  {countFor(seccion.key, {
-                    hoy: pendientesHoy.length,
-                    semana: pendientesSemana.length,
-                    proyectos: proyectos.length,
-                    sin_terminar: sinTerminar.length,
-                  })}
+                  {cuenta[seccion.key]}
                 </span>
               </div>
 
@@ -475,7 +706,9 @@ export default function Dashboard() {
                   expandidos={expandidos}
                   onAlternarProyecto={alternarProyecto}
                   onToggleTarea={alternarHecha}
-                  onAbrirTarea={setAbierta}
+                  onAbrirTarea={abrirTarea}
+                  zonaActiva={zonaActiva}
+                  onPointerDownTarea={agarrarTarea}
                 />
               ) : cargando ? (
                 <div className="space-y-2.5">
@@ -508,6 +741,14 @@ export default function Dashboard() {
         />
       ) : null}
 
+      {hechasAbiertas ? (
+        <HechasPanel
+          tareas={hechasRecientes}
+          proyectos={proyectosPorId}
+          onCerrar={() => setHechasAbiertas(false)}
+        />
+      ) : null}
+
       {abierta ? (
         <TaskDetailPanel
           key={abierta.id}
@@ -520,7 +761,18 @@ export default function Dashboard() {
           onCerrar={() => setAbierta(null)}
           onGuardarDuracion={guardarDuracion}
           onAlternarHecha={alternarHecha}
+          onMover={(tarea, destino) => moverTarea(tarea.id, destino)}
         />
+      ) : null}
+
+      {arrastre ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed z-[70] w-[230px] -translate-x-1/2 -translate-y-1/2 rotate-1 rounded-card border border-hoy/40 bg-white px-3.5 py-3 text-[13.5px] font-medium leading-snug text-ink shadow-float"
+          style={{ left: arrastre.x, top: arrastre.y }}
+        >
+          {arrastre.titulo}
+        </div>
       ) : null}
 
       {aviso ? (
@@ -533,8 +785,4 @@ export default function Dashboard() {
       ) : null}
     </main>
   );
-}
-
-function countFor(key: TabKey, cuentas: Record<TabKey, number>): number {
-  return cuentas[key];
 }

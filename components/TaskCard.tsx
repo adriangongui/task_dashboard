@@ -1,6 +1,6 @@
 "use client";
 
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, PointerEvent } from "react";
 import { formatMin } from "@/lib/duration";
 import type { Proyecto, Tarea } from "@/lib/types";
 
@@ -10,7 +10,8 @@ interface Props {
   sugerida?: boolean;
   onToggle: (tarea: Tarea) => void;
   onOpen: (tarea: Tarea) => void;
-  onReasignar?: (tarea: Tarea, destino: "hoy" | "semana") => void;
+  onReasignar?: (tarea: Tarea, destino: "hoy" | "manana" | "semana") => void;
+  onPointerDown?: (event: PointerEvent<HTMLDivElement>, tarea: Tarea) => void;
 }
 
 export default function TaskCard({
@@ -20,6 +21,7 @@ export default function TaskCard({
   onToggle,
   onOpen,
   onReasignar,
+  onPointerDown,
 }: Props) {
   const hecha = tarea.estado === "hecha";
 
@@ -36,6 +38,9 @@ export default function TaskCard({
       tabIndex={0}
       onClick={() => onOpen(tarea)}
       onKeyDown={alPulsarTecla}
+      onPointerDown={
+        onPointerDown ? (event) => onPointerDown(event, tarea) : undefined
+      }
       aria-label={`Abrir detalle de ${tarea.titulo}`}
       className={[
         "group relative w-full cursor-pointer rounded-card border bg-white p-3.5 text-left shadow-card transition",
@@ -139,6 +144,16 @@ export default function TaskCard({
                 className="rounded-full border border-hoy/25 bg-hoy/[0.06] px-2.5 py-1 text-[11.5px] font-medium text-hoy transition hover:bg-hoy/15"
               >
                 Hoy
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onReasignar(tarea, "manana");
+                }}
+                className="rounded-full border border-[#C08A2E]/30 bg-[#C08A2E]/[0.08] px-2.5 py-1 text-[11.5px] font-medium text-[#9A6B1D] transition hover:bg-[#C08A2E]/15"
+              >
+                Mañana
               </button>
               <button
                 type="button"

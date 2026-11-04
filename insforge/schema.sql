@@ -8,7 +8,7 @@
 do $$
 begin
   if not exists (select 1 from pg_type where typname = 'tipo_tarea') then
-    create type tipo_tarea as enum ('hoy', 'semana', 'proyecto');
+    create type tipo_tarea as enum ('hoy', 'manana', 'semana', 'proyecto');
   end if;
   if not exists (select 1 from pg_type where typname = 'estado_tarea') then
     create type estado_tarea as enum ('pendiente', 'hecha', 'sin_terminar');

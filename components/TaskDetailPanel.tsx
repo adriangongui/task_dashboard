@@ -10,19 +10,36 @@ interface Props {
   onCerrar: () => void;
   onGuardarDuracion: (tarea: Tarea, minutos: number | null) => Promise<void>;
   onAlternarHecha: (tarea: Tarea) => Promise<void>;
+  onMover?: (
+    tarea: Tarea,
+    destino: "hoy" | "manana" | "semana" | "sin_terminar",
+  ) => Promise<void>;
 }
 
 const ETIQUETA_TIPO: Record<Tarea["tipo"], string> = {
   hoy: "Hoy",
+  manana: "Mañana",
   semana: "Esta semana",
   proyecto: "Proyecto",
 };
 
 const COLOR_TIPO: Record<Tarea["tipo"], string> = {
   hoy: "#5B5DD6",
+  manana: "#C08A2E",
   semana: "#22A06B",
   proyecto: "#D97757",
 };
+
+const DESTINOS: Array<{
+  key: "hoy" | "manana" | "semana" | "sin_terminar";
+  label: string;
+  color: string;
+}> = [
+  { key: "hoy", label: "Hoy", color: "#5B5DD6" },
+  { key: "manana", label: "Mañana", color: "#C08A2E" },
+  { key: "semana", label: "Esta semana", color: "#22A06B" },
+  { key: "sin_terminar", label: "Sin terminar", color: "#D6517D" },
+];
 
 export default function TaskDetailPanel({
   tarea,
@@ -30,6 +47,7 @@ export default function TaskDetailPanel({
   onCerrar,
   onGuardarDuracion,
   onAlternarHecha,
+  onMover,
 }: Props) {
   const [duracion, setDuracion] = useState(
     tarea.duracion_estimada_min !== null
@@ -217,6 +235,44 @@ export default function TaskDetailPanel({
             <p className="mt-1.5 text-xs text-muted">{aviso}</p>
           ) : null}
         </div>
+
+        {onMover ? (
+          <div className="mt-5">
+            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
+              Mover a
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {DESTINOS.filter((destino) => destino.key !== tarea.tipo).map(
+                (destino) => (
+                  <button
+                    key={destino.key}
+                    type="button"
+                    disabled={ocupada}
+                    onClick={async () => {
+                      setOcupada(true);
+                      try {
+                        await onMover(tarea, destino.key);
+                        onCerrar();
+                      } catch {
+                        setAviso("No se pudo mover. Inténtalo otra vez.");
+                      } finally {
+                        setOcupada(false);
+                      }
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-[11px] border border-line bg-white px-3 py-2 text-[12.5px] font-medium text-ink transition hover:bg-canvas disabled:opacity-60"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{ backgroundColor: destino.color }}
+                    />
+                    {destino.label}
+                  </button>
+                ),
+              )}
+            </div>
+          </div>
+        ) : null}
 
         <div className="mt-6 flex items-center gap-2">
           <button

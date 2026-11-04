@@ -3,9 +3,10 @@ import type { Clasificacion, DestinoResuelto, Tipo } from "./types";
 const MODELO_POR_DEFECTO = "openai/gpt-oss-120b";
 const URL_GROQ = "https://api.groq.com/openai/v1/chat/completions";
 
-const TIPOS_VALIDOS: Tipo[] = ["hoy", "semana", "proyecto"];
+const TIPOS_VALIDOS: Tipo[] = ["hoy", "manana", "semana", "proyecto"];
 const ACCIONES_VALIDAS: DestinoResuelto["accion"][] = [
   "hoy",
+  "manana",
   "semana",
   "proyecto",
   "cancelar",
@@ -26,7 +27,7 @@ Devuelve SOLO un JSON válido, sin markdown ni explicaciones, con esta forma exa
 {
   "titulo": "resumen corto de máximo 8 palabras, en imperativo",
   "detalle": "el texto original, pulido pero sin recortar información",
-  "tipo": "hoy" | "semana" | "proyecto",
+  "tipo": "hoy" | "manana" | "semana" | "proyecto",
   "duracion_estimada_min": número entero o null si no se puede estimar,
   "paralelizable": true/false,
   "proyecto_sugerido": "nombre del proyecto si detecta que pertenece a uno existente, o null",
@@ -38,6 +39,7 @@ ${listaProyectos}
 
 Reglas de clasificación de "tipo":
 - "hoy": algo que se puede hacer en el día, urgente o puntual.
+- "manana": si dice explícitamente "mañana" o "para mañana".
 - "semana": tiene más margen pero no es un proyecto grande.
 - "proyecto": si menciona o encaja con un proyecto ya existente en la lista, o si describe algo con varias fases.
 
@@ -188,7 +190,8 @@ Devuelve SOLO un JSON válido, sin markdown, con esta forma exacta:
 {"accion": "hoy" | "semana" | "proyecto" | "cancelar" | "duda", "proyecto": "nombre" | null}
 
 Reglas:
-- "hoy": dice hoy, ahora, esta tarde, esta noche, mañana, o algo urgente para el día.
+- "hoy": dice hoy, ahora, esta tarde, esta noche, o algo urgente para el día.
+- "manana": dice mañana, para mañana, o el día siguiente.
 - "semana": dice esta semana, los próximos días, luego, el lunes/martes, o algo sin prisa pero cercano.
 - "proyecto": menciona un proyecto (de la lista o uno nuevo). "proyecto" debe ser el nombre exacto de la lista si coincide, o el nombre que haya dicho.
 - "cancelar": dice cancela, olvídalo, bórralo, déjalo, nada, no era eso.

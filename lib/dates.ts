@@ -12,6 +12,11 @@ export function hoyISO(fecha: Date = new Date()): string {
   }).format(fecha);
 }
 
+/** Fecha YYYY-MM-DD de mañana en la zona del usuario. */
+export function mananaISO(fecha: Date = new Date()): string {
+  return addDias(hoyISO(fecha), 1);
+}
+
 export function addDias(iso: string, dias: number): string {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + dias);

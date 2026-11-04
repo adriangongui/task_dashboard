@@ -1,5 +1,5 @@
 import { clasificarTarea, interpretarDestino } from "@/lib/ai";
-import { hoyISO } from "@/lib/dates";
+import { hoyISO, mananaISO } from "@/lib/dates";
 import { insforgeServer } from "@/lib/insforge/server";
 import { colorParaNombre } from "@/lib/palette";
 import {
@@ -28,9 +28,16 @@ interface UpdateTelegram {
 
 const ETIQUETA_TIPO: Record<string, string> = {
   hoy: "Hoy",
+  manana: "Mañana",
   semana: "Esta semana",
   proyecto: "Proyectos futuros",
 };
+
+function fechaParaTipo(tipo: Tipo): string | null {
+  if (tipo === "hoy") return hoyISO();
+  if (tipo === "manana") return mananaISO();
+  return null;
+}
 
 async function enviarMensaje(chatId: number | string, texto: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -69,7 +76,7 @@ function normalizarNombre(nombre: string): string {
 function preguntaDestino(titulo: string, proyectos: string[]): string {
   const extra =
     proyectos.length > 0 ? `\nProyectos: ${proyectos.join(", ")}.` : "";
-  return `🤔 No sé dónde poner «${titulo}».\n¿Hoy, esta semana o en un proyecto?${extra}\nSi no la quieres, dime «cancela».`;
+  return `🤔 No sé dónde poner «${titulo}».\n¿Hoy, mañana, esta semana o en un proyecto?${extra}\nSi no la quieres, dime «cancela».`;
 }
 
 async function cargarProyectos(): Promise<Proyecto[]> {
@@ -132,7 +139,7 @@ async function insertarTarea(datos: {
       duracion_estimada_min: datos.duracion,
       paralelizable: datos.paralelizable,
       proyecto_id: datos.proyectoId,
-      fecha_para: datos.tipo === "hoy" ? hoyISO() : null,
+      fecha_para: fechaParaTipo(datos.tipo),
     },
   ]);
 
@@ -166,7 +173,7 @@ export async function POST(request: Request) {
   if (/^\/(start|help)\b/.test(texto)) {
     await enviarMensaje(
       chatId,
-      "Escríbeme una tarea y la clasifico sola. Puedes mandar una nota larga o una transcripción de voz: yo saco el título, el proyecto y la duración.\n\nSi no tengo claro dónde ponerla, te preguntaré: respóndeme «hoy», «esta semana» o el nombre del proyecto.",
+      "Escríbeme una tarea y la clasifico sola. Puedes mandar una nota larga o una transcripción de voz: yo saco el título, el proyecto y la duración.\n\nSi no tengo claro dónde ponerla, te preguntaré: respóndeme «hoy», «mañana», «esta semana» o el nombre del proyecto.",
     );
     return Response.json({ ok: true });
   }
@@ -199,7 +206,7 @@ export async function POST(request: Request) {
       if (destino.accion === "proyecto" && !destino.proyecto) {
         await enviarMensaje(
           chatId,
-          `¿En qué proyecto la pongo?${nombres.length > 0 ? `\nProyectos: ${nombres.join(", ")}.` : ""}\nO dime «hoy» / «esta semana».`,
+          `¿En qué proyecto la pongo?${nombres.length > 0 ? `\nProyectos: ${nombres.join(", ")}.` : ""}\nO dime «hoy» / «mañana» / «esta semana».`,
         );
         return Response.json({ ok: true, pregunta: true });
       }

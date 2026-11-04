@@ -3,7 +3,7 @@
 Sistema personal de gestión de tareas con dos caras:
 
 - **Bot de Telegram** (`/api/telegram/webhook`): mandas una nota de texto (o una transcripción de voz) y Groq la convierte en una tarea con título corto, tipo, duración estimada, si es paralelizable y proyecto.
-- **Panel web** (Next.js 14 App Router + InsForge): columnas Hoy / Esta semana / Proyectos futuros / Sin terminar, progreso por proyecto, detalle en panel lateral, plan del día según el tiempo que tengas y alta manual de tareas eligiendo destino.
+- **Panel web** (Next.js 14 App Router + InsForge): columnas Hoy / Mañana / Esta semana / Proyectos futuros / Sin terminar, arrastre de tareas entre columnas, historial de las hechas en los últimos 3 días, progreso por proyecto, detalle en panel lateral, plan del día según el tiempo que tengas y alta manual de tareas eligiendo destino.
 
 ```
 Telegram  →  /api/telegram/webhook  →  Groq (clasifica)  →  InsForge (Postgres)
@@ -119,7 +119,7 @@ Detalles del webhook:
 2. En Vercel: **Add New → Project → Import** el repo. Framework: Next.js (detección automática).
 3. En **Settings → Environment Variables** añade las variables del paso 2 para Production, Preview y Development.
 4. Deploy. Después vuelve al paso 4 para apuntar el webhook a la URL de producción.
-5. El cron de `vercel.json` (`5 23 * * *` UTC ≈ 00:05 en Madrid en horario de invierno y 01:05 en verano) llama a `/api/cron/cerrar-dia`. El endpoint solo mueve tareas cuya fecha es anterior a hoy, así que puede ejecutarse varias veces sin efectos raros. Los crons diarios funcionan en el plan Hobby de Vercel.
+5. El cron de `vercel.json` (`5 23 * * *` UTC ≈ 00:05 en Madrid en horario de invierno y 01:05 en verano) llama a `/api/cron/cerrar-dia`. Primero pasa las tareas de **Mañana** a **Hoy** con la fecha del día; después mueve a **Sin terminar** las de Hoy que sigan pendientes y sean de un día anterior. Es idempotente, así que puede ejecutarse varias veces sin efectos raros. Los crons diarios funcionan en el plan Hobby de Vercel.
 
 ## 6. MCP de InsForge
 
@@ -157,7 +157,7 @@ Duración desconocida = 30 min. Entradas de tiempo aceptadas: `2h 30min`, `1,5h`
 
 `proyectos`: `id` (uuid), `nombre`, `color` (hex), `created_at`.
 
-`tareas`: `id` (uuid), `titulo`, `detalle`, `tipo` (`hoy` | `semana` | `proyecto`), `estado` (`pendiente` | `hecha` | `sin_terminar`), `duracion_estimada_min` (nullable), `paralelizable` (bool), `proyecto_id` (fk nullable), `fecha_para` (date nullable), `created_at`, `completed_at`.
+`tareas`: `id` (uuid), `titulo`, `detalle`, `tipo` (`hoy` | `manana` | `semana` | `proyecto`), `estado` (`pendiente` | `hecha` | `sin_terminar`), `duracion_estimada_min` (nullable), `paralelizable` (bool), `proyecto_id` (fk nullable), `fecha_para` (date nullable), `created_at`, `completed_at`. Las de `manana` guardan `fecha_para` = mañana; el cron las convierte en `hoy` al cambiar el día.
 
 `tareas_pendientes`: `id`, `chat_id` (único), `texto`, `titulo`, `detalle`, `duracion_estimada_min`, `paralelizable`, `created_at`. Solo la usa el servidor; no tiene acceso para `anon`.
 
@@ -196,7 +196,9 @@ scripts/generar-iconos.mjs       # regenera los iconos PNG de la PWA
 
 ## Notas
 
-- El panel usa un único árbol de componentes: en escritorio se convierte en grid de 4 columnas; en móvil (`< 1024px`) muestra pestañas horizontales con scroll y solo la sección activa. La lógica no está duplicada.
+- El panel usa un único árbol de componentes: en escritorio se convierte en grid de 5 columnas; en móvil (`< 1024px`) muestra pestañas horizontales con scroll y solo la sección activa. La lógica no está duplicada.
+- Arrastrar: con ratón basta mover la tarjeta; en táctil hay que mantener pulsada (~320 ms) para no bloquear el scroll. Se puede soltar en Hoy, Mañana, Esta semana, Sin terminar o sobre una tarjeta de proyecto. En móvil, el detalle de cada tarea tiene botones «Mover a» para cambiar de columna sin arrastrar.
+- «Hechas · 3 días» abre el historial de tareas completadas hoy, ayer y anteayer, agrupadas por día.
 - No hay backend propio para leer datos: el navegador habla directo con InsForge usando la anon key.
 - «Nueva tarea» abre un panel para crear tareas sin pasar por Telegram: eliges Hoy, Esta semana o un proyecto (creándolo si escribes uno nuevo), con duración y si es paralelizable. Las de Hoy se guardan con `fecha_para` = hoy.
 - El clasificador usa Groq (`https://api.groq.com/openai/v1/chat/completions`) en modo JSON. Cambia el modelo con `GROQ_MODEL`; el valor por defecto es `openai/gpt-oss-120b` (comprueba con `GET /openai/v1/models` qué modelos expone tu cuenta).

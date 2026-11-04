@@ -10,6 +10,8 @@ interface Props {
   proponiendo: boolean;
   onProponerPlan: (minutos: number) => void;
   onNuevaTarea: () => void;
+  onVerHechas: () => void;
+  hechasRecientes: number;
 }
 
 export default function AppHeader({
@@ -19,6 +21,8 @@ export default function AppHeader({
   proponiendo,
   onProponerPlan,
   onNuevaTarea,
+  onVerHechas,
+  hechasRecientes,
 }: Props) {
   const [tiempo, setTiempo] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +71,31 @@ export default function AppHeader({
               <path d="M10 4.5v11M4.5 10h11" />
             </svg>
             Nueva tarea
+          </button>
+
+          <button
+            type="button"
+            onClick={onVerHechas}
+            className="ml-2 mt-4 inline-flex items-center gap-1.5 rounded-[11px] border border-line bg-white px-3.5 py-2 text-[13px] font-medium text-muted transition hover:border-[#D5D1C7] hover:text-ink"
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 20 20"
+              className="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M4 10.5 7.5 14 16 5.5" />
+            </svg>
+            Hechas · 3 días
+            {hechasRecientes > 0 ? (
+              <span className="rounded-full bg-canvas px-1.5 py-0.5 text-[11px] tabular-nums text-muted">
+                {hechasRecientes}
+              </span>
+            ) : null}
           </button>
         </div>
 

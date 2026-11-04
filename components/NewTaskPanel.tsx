@@ -11,6 +11,7 @@ interface Props {
 
 const DESTINOS: Array<{ key: Tipo; label: string; color: string }> = [
   { key: "hoy", label: "Hoy", color: "#5B5DD6" },
+  { key: "manana", label: "Mañana", color: "#C08A2E" },
   { key: "semana", label: "Esta semana", color: "#22A06B" },
   { key: "proyecto", label: "Proyecto", color: "#D97757" },
 ];

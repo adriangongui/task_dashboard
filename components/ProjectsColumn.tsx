@@ -12,6 +12,11 @@ interface Props {
   onAlternarProyecto: (id: string) => void;
   onToggleTarea: (tarea: Tarea) => void;
   onAbrirTarea: (tarea: Tarea) => void;
+  zonaActiva?: string | null;
+  onPointerDownTarea?: (
+    event: React.PointerEvent<HTMLDivElement>,
+    tarea: Tarea,
+  ) => void;
 }
 
 const SIN_PROYECTO = "sin-proyecto";
@@ -24,9 +29,11 @@ export default function ProjectsColumn({
   onAlternarProyecto,
   onToggleTarea,
   onAbrirTarea,
+  zonaActiva,
+  onPointerDownTarea,
 }: Props) {
   const huerfanas = tareas.filter(
-    (t) => t.tipo === "proyecto" && !t.proyecto_id && t.estado !== "hecha",
+    (t) => t.tipo === "proyecto" && !t.proyecto_id && t.estado === "pendiente",
   );
 
   if (proyectos.length === 0 && huerfanas.length === 0) {
@@ -44,13 +51,19 @@ export default function ProjectsColumn({
         const hechas = delProyecto.filter((t) => t.estado === "hecha").length;
         const total = delProyecto.length;
         const pct = total > 0 ? Math.round((hechas / total) * 100) : 0;
-        const pendientes = delProyecto.filter((t) => t.estado !== "hecha");
+        const pendientes = delProyecto.filter((t) => t.estado === "pendiente");
         const abierto = expandidos.has(proyecto.id);
 
         return (
           <div
             key={proyecto.id}
-            className="overflow-hidden rounded-card border border-line bg-white shadow-card"
+            data-destino={`proyecto:${proyecto.id}`}
+            className={[
+              "overflow-hidden rounded-card border bg-white shadow-card transition",
+              zonaActiva === `proyecto:${proyecto.id}`
+                ? "border-hoy/50 ring-2 ring-hoy/25"
+                : "border-line",
+            ].join(" ")}
           >
             <button
               type="button"
@@ -121,6 +134,7 @@ export default function ProjectsColumn({
                       sugerida={sugeridas.has(tarea.id)}
                       onToggle={onToggleTarea}
                       onOpen={onAbrirTarea}
+                      onPointerDown={onPointerDownTarea}
                     />
                   ))
                 )}
@@ -171,6 +185,7 @@ export default function ProjectsColumn({
                   sugerida={sugeridas.has(tarea.id)}
                   onToggle={onToggleTarea}
                   onOpen={onAbrirTarea}
+                  onPointerDown={onPointerDownTarea}
                 />
               ))}
             </div>

@@ -1,4 +1,4 @@
-export type Tipo = "hoy" | "semana" | "proyecto";
+export type Tipo = "hoy" | "manana" | "semana" | "proyecto";
 
 export type Estado = "pendiente" | "hecha" | "sin_terminar";
 
@@ -46,6 +46,6 @@ export interface Clasificacion {
 
 /** Resultado de interpretar la respuesta a "¿dónde pongo esto?". */
 export interface DestinoResuelto {
-  accion: "hoy" | "semana" | "proyecto" | "cancelar" | "duda";
+  accion: "hoy" | "manana" | "semana" | "proyecto" | "cancelar" | "duda";
   proyecto: string | null;
 }

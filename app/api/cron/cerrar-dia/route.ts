@@ -11,15 +11,38 @@ interface TareaVencida {
 }
 
 /**
- * Cierre del día: las tareas de "Hoy" que siguen pendientes pasan a
- * "Sin terminar". Es idempotente: una tarea solo se mueve si su fecha
- * (o, si no tiene, su día de creación) es anterior a hoy, así que se puede
- * llamar varias veces sin efectos raros.
+ * Cierre del día:
+ *  1. Las tareas de "Mañana" pasan a "Hoy" con la fecha de hoy.
+ *  2. Las de "Hoy" que siguen pendientes pasan a "Sin terminar".
+ * Es idempotente: una tarea solo se mueve si su fecha (o, si no tiene, su día
+ * de creación) es anterior a hoy, así que se puede llamar varias veces sin
+ * efectos raros.
  */
 export async function GET() {
   try {
     const insforge = insforgeServer();
     const hoy = hoyISO();
+
+    const { data: paraManana, error: errorManana } = await insforge.database
+      .from("tareas")
+      .select("id")
+      .eq("tipo", "manana")
+      .eq("estado", "pendiente");
+
+    if (errorManana) throw errorManana;
+
+    const promovidas = ((paraManana ?? []) as Array<{ id: string }>).map(
+      (t) => t.id,
+    );
+
+    if (promovidas.length > 0) {
+      const { error: errorPromover } = await insforge.database
+        .from("tareas")
+        .update({ tipo: "hoy", fecha_para: hoy })
+        .in("id", promovidas);
+
+      if (errorPromover) throw errorPromover;
+    }
 
     const { data, error } = await insforge.database
       .from("tareas")
@@ -33,21 +56,23 @@ export async function GET() {
       t.fecha_para ? t.fecha_para < hoy : hoyISO(new Date(t.created_at)) < hoy,
     );
 
-    if (vencidas.length === 0) {
-      return Response.json({ ok: true, movidas: 0 });
+    if (vencidas.length > 0) {
+      const { error: errorUpdate } = await insforge.database
+        .from("tareas")
+        .update({ estado: "sin_terminar" })
+        .in(
+          "id",
+          vencidas.map((t) => t.id),
+        );
+
+      if (errorUpdate) throw errorUpdate;
     }
 
-    const { error: errorUpdate } = await insforge.database
-      .from("tareas")
-      .update({ estado: "sin_terminar" })
-      .in(
-        "id",
-        vencidas.map((t) => t.id),
-      );
-
-    if (errorUpdate) throw errorUpdate;
-
-    return Response.json({ ok: true, movidas: vencidas.length });
+    return Response.json({
+      ok: true,
+      promovidas: promovidas.length,
+      movidas: vencidas.length,
+    });
   } catch (error) {
     const mensaje = error instanceof Error ? error.message : "error desconocido";
     console.error("Error cerrando el día", error);
