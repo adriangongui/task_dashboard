@@ -1,3 +1,4 @@
+import { interpretarDestinoRapido, normalizarTexto } from "./destino";
 import type { Clasificacion, DestinoResuelto, Tipo } from "./types";
 
 const MODELO_POR_DEFECTO = "openai/gpt-oss-120b";
@@ -179,6 +180,11 @@ export async function interpretarDestino(
   proyectos: string[],
   titulo: string,
 ): Promise<DestinoResuelto> {
+  // Respuestas cortas («hoy», «en mañana», «cancela», el nombre de un
+  // proyecto): se resuelven con reglas, sin llamar al modelo.
+  const rapido = interpretarDestinoRapido(texto, proyectos);
+  if (rapido) return rapido;
+
   const lista =
     proyectos.length > 0
       ? proyectos.map((p) => `- ${p}`).join("\n")
@@ -187,11 +193,11 @@ export async function interpretarDestino(
   const sistema = `El usuario está decidiendo dónde guardar una tarea en un gestor personal.
 
 Devuelve SOLO un JSON válido, sin markdown, con esta forma exacta:
-{"accion": "hoy" | "semana" | "proyecto" | "cancelar" | "duda", "proyecto": "nombre" | null}
+{"accion": "hoy" | "manana" | "semana" | "proyecto" | "cancelar" | "duda", "proyecto": "nombre" | null}
 
 Reglas:
 - "hoy": dice hoy, ahora, esta tarde, esta noche, o algo urgente para el día.
-- "manana": dice mañana, para mañana, o el día siguiente.
+- "manana": dice mañana, para mañana, o el día siguiente. Si menciona «mañana», es SIEMPRE "manana", nunca "semana".
 - "semana": dice esta semana, los próximos días, luego, el lunes/martes, o algo sin prisa pero cercano.
 - "proyecto": menciona un proyecto (de la lista o uno nuevo). "proyecto" debe ser el nombre exacto de la lista si coincide, o el nombre que haya dicho.
 - "cancelar": dice cancela, olvídalo, bórralo, déjalo, nada, no era eso.
@@ -205,9 +211,14 @@ ${lista}`;
     `Tarea pendiente: "${titulo}"\nRespuesta del usuario: "${texto}"`,
   )) as Record<string, unknown>;
 
-  const accion = ACCIONES_VALIDAS.includes(datos.accion as DestinoResuelto["accion"])
+  let accion = ACCIONES_VALIDAS.includes(datos.accion as DestinoResuelto["accion"])
     ? (datos.accion as DestinoResuelto["accion"])
     : "duda";
+
+  // Red de seguridad por si el modelo vuelve a confundir «mañana» con semana.
+  if (accion === "semana" && /\b(manana|amanana)\b/.test(normalizarTexto(texto))) {
+    accion = "manana";
+  }
 
   const proyecto =
     typeof datos.proyecto === "string" && datos.proyecto.trim().length > 0
