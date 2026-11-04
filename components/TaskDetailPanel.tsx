@@ -9,6 +9,11 @@ interface Props {
   proyecto?: Proyecto;
   onCerrar: () => void;
   onGuardarDuracion: (tarea: Tarea, minutos: number | null) => Promise<void>;
+  onGuardarContenido: (
+    tarea: Tarea,
+    cambios: { titulo: string; detalle: string },
+  ) => Promise<void>;
+  onEliminar: (tarea: Tarea) => Promise<void>;
   onAlternarHecha: (tarea: Tarea) => Promise<void>;
   onMover?: (
     tarea: Tarea,
@@ -46,6 +51,8 @@ export default function TaskDetailPanel({
   proyecto,
   onCerrar,
   onGuardarDuracion,
+  onGuardarContenido,
+  onEliminar,
   onAlternarHecha,
   onMover,
 }: Props) {
@@ -57,6 +64,11 @@ export default function TaskDetailPanel({
   const [guardando, setGuardando] = useState(false);
   const [ocupada, setOcupada] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
+  const [titulo, setTitulo] = useState(tarea.titulo);
+  const [detalle, setDetalle] = useState(tarea.detalle);
+  const [guardandoTexto, setGuardandoTexto] = useState(false);
+  const [confirmandoBorrar, setConfirmandoBorrar] = useState(false);
+  const [eliminando, setEliminando] = useState(false);
 
   useEffect(() => {
     function alPulsar(event: KeyboardEvent) {
@@ -102,6 +114,43 @@ export default function TaskDetailPanel({
       setOcupada(false);
     }
   }
+
+  async function guardarContenido() {
+    const tituloLimpio = titulo.trim();
+    if (!tituloLimpio) {
+      setAviso("El título no puede estar vacío.");
+      return;
+    }
+
+    setGuardandoTexto(true);
+    setAviso(null);
+    try {
+      await onGuardarContenido(tarea, {
+        titulo: tituloLimpio,
+        detalle: detalle.trim(),
+      });
+      setAviso("Cambios guardados");
+    } catch {
+      setAviso("No se pudieron guardar los cambios.");
+    } finally {
+      setGuardandoTexto(false);
+    }
+  }
+
+  async function eliminar() {
+    setEliminando(true);
+    setAviso(null);
+    try {
+      await onEliminar(tarea);
+    } catch {
+      setAviso("No se pudo eliminar la tarea.");
+      setEliminando(false);
+      setConfirmandoBorrar(false);
+    }
+  }
+
+  const cambios =
+    titulo.trim() !== tarea.titulo || detalle.trim() !== tarea.detalle;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center lg:items-stretch lg:justify-end">
@@ -154,12 +203,16 @@ export default function TaskDetailPanel({
           </button>
         </div>
 
-        <h2
+        <input
           id="detalle-titulo"
-          className="text-[20px] font-semibold leading-snug tracking-[-0.015em]"
-        >
-          {tarea.titulo}
-        </h2>
+          value={titulo}
+          onChange={(event) => {
+            setTitulo(event.target.value);
+            if (aviso) setAviso(null);
+          }}
+          aria-label="Título de la tarea"
+          className="w-full rounded-[10px] border border-transparent bg-transparent px-0 py-0.5 text-[20px] font-semibold leading-snug tracking-[-0.015em] outline-none transition hover:border-line focus:border-hoy/45 focus:bg-white focus:px-2 focus:py-1.5"
+        />
 
         <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11.5px]">
           {tarea.duracion_estimada_min ? (
@@ -189,13 +242,48 @@ export default function TaskDetailPanel({
         </div>
 
         <div className="mt-5">
-          <p className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
-            Detalle original
-          </p>
-          <div className="rounded-card border border-line bg-canvas/60 px-3.5 py-3 text-[13.5px] leading-relaxed text-[#3A3630]">
-            <p className="whitespace-pre-wrap break-words">{tarea.detalle}</p>
-          </div>
+          <label
+            htmlFor="detalle"
+            className="mb-1.5 block text-[11px] font-medium uppercase tracking-[0.12em] text-muted"
+          >
+            Detalle
+          </label>
+          <textarea
+            id="detalle"
+            value={detalle}
+            onChange={(event) => {
+              setDetalle(event.target.value);
+              if (aviso) setAviso(null);
+            }}
+            rows={4}
+            placeholder="Notas de la tarea"
+            className="w-full resize-y rounded-card border border-line bg-canvas/60 px-3.5 py-3 text-[13.5px] leading-relaxed text-[#3A3630] outline-none transition focus:border-hoy/45 focus:bg-white placeholder:text-muted/70"
+          />
         </div>
+
+        {cambios ? (
+          <div className="mt-2.5 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={guardarContenido}
+              disabled={guardandoTexto}
+              className="rounded-[11px] bg-ink px-3.5 py-2 text-[13px] font-medium text-white transition hover:bg-[#111110] disabled:opacity-60"
+            >
+              {guardandoTexto ? "Guardando…" : "Guardar cambios"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setTitulo(tarea.titulo);
+                setDetalle(tarea.detalle);
+                setAviso(null);
+              }}
+              className="rounded-[11px] border border-line bg-white px-3 py-2 text-[12.5px] font-medium text-muted transition hover:border-[#D5D1C7] hover:text-ink"
+            >
+              Descartar
+            </button>
+          </div>
+        ) : null}
 
         <div className="mt-5">
           <label
@@ -288,6 +376,52 @@ export default function TaskDetailPanel({
           >
             {hecha ? "Reabrir tarea" : "Marcar como hecha"}
           </button>
+        </div>
+
+        <div className="mt-3 border-t border-line pt-3">
+          {confirmandoBorrar ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[12.5px] text-muted">
+                ¿Eliminar «{tarea.titulo}»?
+              </span>
+              <button
+                type="button"
+                onClick={eliminar}
+                disabled={eliminando}
+                className="rounded-[11px] bg-sinterminar px-3 py-2 text-[12.5px] font-medium text-white transition hover:bg-[#BD426B] disabled:opacity-60"
+              >
+                {eliminando ? "Eliminando…" : "Sí, eliminar"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmandoBorrar(false)}
+                disabled={eliminando}
+                className="rounded-[11px] border border-line bg-white px-3 py-2 text-[12.5px] font-medium text-muted transition hover:border-[#D5D1C7] hover:text-ink disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmandoBorrar(true)}
+              className="inline-flex items-center gap-1.5 rounded-[11px] border border-sinterminar/30 bg-white px-3 py-2 text-[12.5px] font-medium text-sinterminar transition hover:bg-sinterminar/[0.06]"
+            >
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 20 20"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M4 6.5h12M8 6.5V4.8h4v1.7M6 6.5l.7 8.2h6.6l.7-8.2M8.6 9v3.4M11.4 9v3.4" />
+              </svg>
+              Eliminar tarea
+            </button>
+          )}
         </div>
       </div>
     </div>

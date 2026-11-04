@@ -432,6 +432,29 @@ export default function Dashboard() {
     [actualizarTarea],
   );
 
+  const guardarContenido = useCallback(
+    async (tarea: Tarea, cambios: { titulo: string; detalle: string }) => {
+      await actualizarTarea(tarea.id, {
+        titulo: cambios.titulo,
+        detalle: cambios.detalle,
+      });
+      setAviso("Tarea actualizada");
+    },
+    [actualizarTarea],
+  );
+
+  const eliminarTarea = useCallback(async (tarea: Tarea) => {
+    const { error: errorDelete } = await insforgeBrowser()
+      .database.from("tareas")
+      .delete()
+      .eq("id", tarea.id);
+    if (errorDelete) throw errorDelete;
+
+    setTareas((prev) => prev.filter((t) => t.id !== tarea.id));
+    setAbierta(null);
+    setAviso("Tarea eliminada");
+  }, []);
+
   const crearTarea = useCallback(async (datos: NuevaTarea) => {
     const { data, error: errorInsert } = await insforgeBrowser()
       .database.from("tareas")
@@ -808,6 +831,8 @@ export default function Dashboard() {
           }
           onCerrar={() => setAbierta(null)}
           onGuardarDuracion={guardarDuracion}
+          onGuardarContenido={guardarContenido}
+          onEliminar={eliminarTarea}
           onAlternarHecha={alternarHecha}
           onMover={(tarea, destino) => moverTarea(tarea.id, destino)}
         />
