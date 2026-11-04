@@ -87,6 +87,74 @@ function preguntaDestino(titulo: string, proyectos: string[]): string {
   return `🤔 No sé dónde poner «${titulo}».\n¿Hoy, mañana, esta semana o en un proyecto?${extra}\nSi no la quieres, dime «cancela».`;
 }
 
+const TIPOS_VALIDOS: Tipo[] = ["hoy", "manana", "semana", "proyecto"];
+
+interface TareaPropuesta {
+  titulo: string;
+  detalle: string;
+  tipo: Tipo;
+  duracion: number | null;
+  paralelizable: boolean;
+  proyectoId: string | null;
+  proyectoNombre: string | null;
+}
+
+function respuestaAfirmativa(texto: string): boolean {
+  return /^(s[ií]|vale|ok|okey|crea(?:la)?|adelante|claro|hazlo|confirmo)$/i.test(
+    texto.trim().replace(/[.!]+$/, ""),
+  );
+}
+
+function respuestaNegativa(texto: string): boolean {
+  return /^(no|nope|cancela|cancelar|mejor no|nada|d[eé]jalo)$/i.test(
+    texto.trim().replace(/[.!]+$/, ""),
+  );
+}
+
+function leerPropuesta(datos: Record<string, unknown>): TareaPropuesta | null {
+  const titulo = typeof datos.titulo === "string" ? datos.titulo : "";
+  const tipo = datos.tipo as Tipo;
+
+  if (!titulo || !TIPOS_VALIDOS.includes(tipo)) return null;
+
+  return {
+    titulo,
+    detalle: typeof datos.detalle === "string" ? datos.detalle : "",
+    tipo,
+    duracion: typeof datos.duracion === "number" ? datos.duracion : null,
+    paralelizable: datos.paralelizable === true,
+    proyectoId:
+      typeof datos.proyectoId === "string" ? datos.proyectoId : null,
+    proyectoNombre:
+      typeof datos.proyectoNombre === "string" ? datos.proyectoNombre : null,
+  };
+}
+
+function resumenPropuesta(tarea: TareaPropuesta): string {
+  const lineas = [`• Tarea: ${tarea.titulo}`];
+  lineas.push(
+    `• Dónde: ${tarea.proyectoNombre ?? ETIQUETA_TIPO[tarea.tipo] ?? tarea.tipo}`,
+  );
+  if (tarea.duracion) lineas.push(`• Duración: ${tarea.duracion} min`);
+  if (tarea.paralelizable) lineas.push("• Paralelizable");
+  return lineas.join("\n");
+}
+
+/** No crea nada: guarda la propuesta y espera un «sí» explícito. */
+async function proponerTarea(
+  chatId: number | string,
+  tarea: TareaPropuesta,
+): Promise<void> {
+  await guardarEstado(chatId, {
+    accion: "confirmar_tarea",
+    datos: { ...tarea },
+  });
+  await enviarMensaje(
+    chatId,
+    `¿Creo esta tarea?\n\n${resumenPropuesta(tarea)}\n\nResponde «sí» para crearla o «no» para cancelar.`,
+  );
+}
+
 function pedirColumna(): string {
   return "¿De qué columna quieres borrar?\nDime «hoy», «mañana» o «esta semana».";
 }
@@ -277,7 +345,8 @@ export async function POST(request: Request) {
   if (/^\/(start|help)\b/.test(texto)) {
     await enviarMensaje(
       chatId,
-      "Escríbeme una tarea y la clasifico sola.\n\n" +
+      "Escríbeme una tarea y te la propongo antes de crearla.\n\n" +
+        "· Confirmar: te enseño la tarea y espero tu «sí» (o «no» para descartarla).\n" +
         "· Proyectos: «crea el proyecto Kerbal» y «mete en el proyecto Kerbal la tarea …».\n" +
         "· Borrar: «elimina la tarea anterior», «elimina la tarea de comprar pilas» o «elimina tareas» y te pregunto de qué columna.\n" +
         "· Si no tengo claro dónde va una tarea, te pregunto: «hoy», «mañana», «esta semana» o un proyecto.",
@@ -296,7 +365,50 @@ export async function POST(request: Request) {
     // ---------------------------------------------------------------
     // Conversaciones que dejamos abiertas en mensajes anteriores
     // ---------------------------------------------------------------
+    if (accion === "confirmar_tarea") {
+      const propuesta = leerPropuesta(estado?.datos ?? {});
+
+      if (!propuesta) {
+        await limpiarAccion(chatId);
+        await enviarMensaje(
+          chatId,
+          "Se me ha perdido la tarea que iba a crear. Dímela otra vez.",
+        );
+        return Response.json({ ok: true });
+      }
+
+      if (respuestaNegativa(texto)) {
+        await limpiarAccion(chatId);
+        await enviarMensaje(chatId, "Vale, no la creo.");
+        return Response.json({ ok: true, cancelada: true });
+      }
+
+      if (!respuestaAfirmativa(texto)) {
+        await enviarMensaje(
+          chatId,
+          `No te he entendido. Responde «sí» o «no».\n\n${resumenPropuesta(propuesta)}`,
+        );
+        return Response.json({ ok: true, pregunta: true });
+      }
+
+      const id = await insertarTarea(propuesta);
+      await limpiarAccion(chatId);
+      await recordarUltimaTarea(chatId, id);
+
+      const donde =
+        propuesta.proyectoNombre ??
+        (ETIQUETA_TIPO[propuesta.tipo] ?? propuesta.tipo);
+      await enviarMensaje(chatId, `✅ Añadida a ${donde}: ${propuesta.titulo}`);
+      return Response.json({ ok: true, creada: true });
+    }
+
     if (accion === "proyecto_tarea") {
+      if (respuestaNegativa(texto)) {
+        await limpiarAccion(chatId);
+        await enviarMensaje(chatId, "Vale, no añado nada.");
+        return Response.json({ ok: true, cancelada: true });
+      }
+
       const nombreProyecto = String(estado?.datos?.proyecto ?? "");
       const proyecto = buscarProyecto(nombreProyecto, listaProyectos);
       await limpiarAccion(chatId);
@@ -316,21 +428,16 @@ export async function POST(request: Request) {
       }
 
       const clasificacion = await clasificarTarea(texto, nombres);
-      const id = await insertarTarea({
+      await proponerTarea(chatId, {
         titulo: clasificacion.titulo,
         detalle: clasificacion.detalle,
         tipo: "proyecto",
         duracion: clasificacion.duracion_estimada_min,
         paralelizable: clasificacion.paralelizable,
         proyectoId: proyecto.id,
+        proyectoNombre: proyecto.nombre,
       });
-      await recordarUltimaTarea(chatId, id);
-
-      await enviarMensaje(
-        chatId,
-        `✅ Añadida a ${proyecto.nombre}: ${clasificacion.titulo}`,
-      );
-      return Response.json({ ok: true, desdeConversacion: true });
+      return Response.json({ ok: true, pregunta: true, confirmar: true });
     }
 
     if (accion === "borrar_columna") {
@@ -447,21 +554,16 @@ export async function POST(request: Request) {
       }
 
       const clasificacion = await clasificarTarea(comando.tarea, nombres);
-      const id = await insertarTarea({
+      await proponerTarea(chatId, {
         titulo: clasificacion.titulo,
         detalle: clasificacion.detalle,
         tipo: "proyecto",
         duracion: clasificacion.duracion_estimada_min,
         paralelizable: clasificacion.paralelizable,
         proyectoId: proyecto.id,
+        proyectoNombre: proyecto.nombre,
       });
-      await recordarUltimaTarea(chatId, id);
-
-      await enviarMensaje(
-        chatId,
-        `✅ Añadida a ${proyecto.nombre}: ${clasificacion.titulo}`,
-      );
-      return Response.json({ ok: true, comando: "anadir_a_proyecto" });
+      return Response.json({ ok: true, pregunta: true, confirmar: true });
     }
 
     if (comando?.tipo === "borrar_ultima") {
@@ -531,6 +633,9 @@ export async function POST(request: Request) {
 
     if (pendiente) {
       const tituloPendiente = pendiente.titulo;
+      const pendienteDetalle = pendiente.detalle;
+      const pendienteDuracion = pendiente.duracion_estimada_min;
+      const pendienteParalelizable = pendiente.paralelizable;
       const destino = await interpretarDestino(texto, nombres, tituloPendiente);
 
       if (destino.accion === "cancelar") {
@@ -563,40 +668,33 @@ export async function POST(request: Request) {
           return Response.json({ ok: true, pregunta: true });
         }
 
-        const id = await insertarTarea({
-          titulo: pendiente.titulo,
-          detalle: pendiente.detalle,
-          tipo: "proyecto",
-          duracion: pendiente.duracion_estimada_min,
-          paralelizable: pendiente.paralelizable,
-          proyectoId: proyecto.id,
-        });
         await borrarPendiente(pendiente.id);
         pendiente = null;
-        await recordarUltimaTarea(chatId, id);
-        await enviarMensaje(
-          chatId,
-          `✅ Añadida a ${proyecto.nombre}: ${tituloPendiente}`,
-        );
-        return Response.json({ ok: true, desdePendiente: true });
+        await proponerTarea(chatId, {
+          titulo: tituloPendiente,
+          detalle: pendienteDetalle,
+          tipo: "proyecto",
+          duracion: pendienteDuracion,
+          paralelizable: pendienteParalelizable,
+          proyectoId: proyecto.id,
+          proyectoNombre: proyecto.nombre,
+        });
+        return Response.json({ ok: true, pregunta: true, confirmar: true });
       }
 
       const tipo = destino.accion as Tipo;
-      const id = await insertarTarea({
-        titulo: pendiente.titulo,
-        detalle: pendiente.detalle,
-        tipo,
-        duracion: pendiente.duracion_estimada_min,
-        paralelizable: pendiente.paralelizable,
-        proyectoId: null,
-      });
       await borrarPendiente(pendiente.id);
       pendiente = null;
-      await recordarUltimaTarea(chatId, id);
-
-      const donde = ETIQUETA_TIPO[tipo] ?? "tu lista";
-      await enviarMensaje(chatId, `✅ Añadida a ${donde}: ${tituloPendiente}`);
-      return Response.json({ ok: true, desdePendiente: true });
+      await proponerTarea(chatId, {
+        titulo: tituloPendiente,
+        detalle: pendienteDetalle,
+        tipo,
+        duracion: pendienteDuracion,
+        paralelizable: pendienteParalelizable,
+        proyectoId: null,
+        proyectoNombre: null,
+      });
+      return Response.json({ ok: true, pregunta: true, confirmar: true });
     }
 
     // ---------------------------------------------------------------
@@ -618,24 +716,17 @@ export async function POST(request: Request) {
       ? buscarProyecto(clasificacion.proyecto_sugerido, listaProyectos)
       : undefined;
 
-    const id = await insertarTarea({
+    await proponerTarea(chatId, {
       titulo: clasificacion.titulo,
       detalle: clasificacion.detalle,
       tipo: clasificacion.tipo,
       duracion: clasificacion.duracion_estimada_min,
       paralelizable: clasificacion.paralelizable,
       proyectoId: proyecto?.id ?? null,
+      proyectoNombre: proyecto?.nombre ?? null,
     });
-    await recordarUltimaTarea(chatId, id);
 
-    const donde =
-      clasificacion.tipo === "proyecto" && proyecto
-        ? proyecto.nombre
-        : (ETIQUETA_TIPO[clasificacion.tipo] ?? clasificacion.tipo);
-
-    await enviarMensaje(chatId, `✅ Añadida a ${donde}: ${clasificacion.titulo}`);
-
-    return Response.json({ ok: true });
+    return Response.json({ ok: true, pregunta: true, confirmar: true });
   } catch (error) {
     console.error("Error procesando el mensaje de Telegram", error);
     const mensajeError =

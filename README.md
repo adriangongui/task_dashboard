@@ -2,7 +2,7 @@
 
 Sistema personal de gestión de tareas con dos caras:
 
-- **Bot de Telegram** (`/api/telegram/webhook`): mandas una nota de texto (o una transcripción de voz) y Groq la convierte en una tarea con título corto, tipo, duración estimada, si es paralelizable y proyecto.
+- **Bot de Telegram** (`/api/telegram/webhook`): mandas una nota de texto (o una transcripción de voz) y Groq la convierte en una propuesta de tarea (título corto, tipo, duración estimada, si es paralelizable y proyecto) que confirmas con «sí» antes de que se guarde.
 - **Panel web** (Next.js 14 App Router + InsForge): columnas Hoy / Mañana / Esta semana / Proyectos futuros / Sin terminar, arrastre de tareas entre columnas, historial de las hechas en los últimos 3 días, progreso por proyecto, detalle en panel lateral, plan del día según el tiempo que tengas y alta manual de tareas eligiendo destino.
 
 ```
@@ -103,11 +103,12 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
 
 > mañana tengo que llamar al gestor para lo del contrato del piso, calculo media hora
 
-Respuesta esperada: `✅ Añadida a Hoy: Llamar al gestor por el contrato`.
+Respuesta esperada: `¿Creo esta tarea?` con el título, la columna y la duración. Contesta «sí» y verás `✅ Añadida a Hoy: Llamar al gestor por el contrato`.
 
 Detalles del webhook:
 
 - Devuelve `200` siempre que el update esté bien formado, para que Telegram no reintente en bucle; si Groq o InsForge fallan, el error se cuenta en el chat y la tarea no se da por guardada.
+- **Nada se crea sin confirmar**: en cuanto la tarea tiene título y destino, el bot responde «¿Creo esta tarea?» con el título, dónde iría y la duración. Solo se guarda si contestas «sí» (también valen «vale», «ok», «adelante»); «no» la descarta. Cualquier otra respuesta te vuelve a preguntar. La propuesta vive en `estados_chat` con `accion = confirmar_tarea`, así que sobrevive a reinicios.
 - Los proyectos **solo se crean si lo pides**: «crea el proyecto Kerbal». Si el clasificador sugiere un proyecto que no existe, la tarea se guarda sin proyecto.
 - Para meter una tarea en un proyecto: «mete en el proyecto Kerbal la tarea jugar al roblox». Si no dices la tarea, el bot pregunta «¿Qué tarea meto en Kerbal?» y usa tu siguiente mensaje.
 - Borrar por chat: «elimina la tarea anterior» (la última que creó el bot), «elimina la tarea de comprar pan» (por título) o «elimina tareas» → pregunta «hoy», «mañana» o «esta semana», lista esa columna numerada y borra la que elijas por número o título. El estado de cada conversación vive en la tabla `estados_chat`.
