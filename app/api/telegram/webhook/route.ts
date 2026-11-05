@@ -342,6 +342,8 @@ function aplicarCorreccion(
     tipo,
     proyectoId,
     proyectoNombre,
+    duracion:
+      cambio.duracion !== undefined ? cambio.duracion : propuesta.duracion,
   };
 }
 
@@ -363,7 +365,7 @@ async function proponerItems(
     unico?.clase === "recordatorio"
       ? "Responde «sí» o «no», o pulsa «Editar» para copiar el recordatorio y cambiar lo que quieras."
       : unico
-        ? "Responde «sí» o «no», o dime qué cambio: «el título es …», «mejor mañana», «en el proyecto …»."
+        ? "Responde «sí» o «no», o dime qué cambio: «el título es …», «mejor mañana», «en el proyecto …», «cambia la duración a 45 min»."
         : "Responde «sí» o «no». Si algo no encaja, cancela y mándamelo otra vez.";
 
   const listado = items.map(resumenItem).join("\n");
@@ -712,7 +714,7 @@ export async function POST(request: Request) {
 
           await enviarMensaje(
             chatId,
-            `No te he entendido. Responde «sí» o «no», o dime qué cambio: «el título es …», «mejor mañana» o «en el proyecto …».\n\n${items
+            `No te he entendido. Responde «sí» o «no», o dime qué cambio: «el título es …», «mejor mañana», «en el proyecto …» o «cambia la duración a 45 min».\n\n${items
               .map(resumenItem)
               .join("\n")}`,
             { botones: true, borrador: unico ? textoBorrador(unico) : undefined },
