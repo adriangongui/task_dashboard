@@ -11,6 +11,7 @@ interface Props {
   onProponerPlan: (minutos: number) => void;
   onNuevaTarea: () => void;
   onVerHechas: () => void;
+  onEnfoque: () => void;
   hechasRecientes: number;
 }
 
@@ -22,6 +23,7 @@ export default function AppHeader({
   onProponerPlan,
   onNuevaTarea,
   onVerHechas,
+  onEnfoque,
   hechasRecientes,
 }: Props) {
   const [tiempo, setTiempo] = useState("");
@@ -96,6 +98,26 @@ export default function AppHeader({
                 {hechasRecientes}
               </span>
             ) : null}
+          </button>
+
+          <button
+            type="button"
+            onClick={onEnfoque}
+            className="ml-2 mt-4 inline-flex items-center gap-1.5 rounded-[11px] border border-line bg-white px-3.5 py-2 text-[13px] font-medium text-muted transition hover:border-[#D5D1C7] hover:text-ink"
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              className="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+            >
+              <circle cx="12" cy="12.5" r="7.5" />
+              <path d="M12 9v4l2.5 1.5M9 3.5h6" />
+            </svg>
+            Enfoque
           </button>
         </div>
 

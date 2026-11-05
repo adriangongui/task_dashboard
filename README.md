@@ -170,6 +170,16 @@ Reinicia el cliente de IA y comprueba la conexión pidiendo el tool `fetch-docs`
 
 Duración desconocida = 30 min. Entradas de tiempo aceptadas: `2h 30min`, `1,5h`, `90`, `90 min`, `1:30`.
 
+### Sesión de enfoque y temporizadores
+
+Con el plan propuesto, **Empezar sesión** (o el botón **Enfoque** de la cabecera) abre el panel de enfoque:
+
+- Eliges una tarea de las que caben y arranca un cronómetro para ella. El tiempo restante baja en vivo.
+- **Pausar / Seguir** deja el cronómetro en espera; **Terminar y marcar hecha** marca la tarea, descuenta lo tardado del tiempo disponible y vuelve a la lista para elegir la siguiente.
+- **Descartar tiempo** deja la tarea pendiente y no descuenta nada.
+- La sesión se guarda en `localStorage`, así que el cronómetro sigue corriendo aunque recargues o cierres la pestaña y vuelvas.
+- Pestañas **Cronómetro** (cuenta hacia arriba) y **Cuenta atrás** (minutos, con aviso al llegar a cero) sirven para estudiar o cronometrar cualquier cosa sin asociarla a una tarea.
+
 ## Modelo de datos
 
 `proyectos`: `id` (uuid), `nombre`, `color` (hex), `created_at`.

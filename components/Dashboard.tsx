@@ -16,6 +16,7 @@ import type { PlanDia } from "@/lib/plan";
 import type { NuevaTarea, Proyecto, Tarea } from "@/lib/types";
 import { insforgeBrowser, insforgeConfigurado } from "@/lib/insforge/client";
 import AppHeader from "./AppHeader";
+import FocusPanel from "./FocusPanel";
 import HechasPanel from "./HechasPanel";
 import ProjectsColumn, { SIN_PROYECTO } from "./ProjectsColumn";
 import StatsRow from "./StatsRow";
@@ -114,6 +115,7 @@ export default function Dashboard() {
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [creando, setCreando] = useState(false);
   const [hechasAbiertas, setHechasAbiertas] = useState(false);
+  const [enfoque, setEnfoque] = useState(false);
   const [foco, setFoco] = useState<Foco>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [arrastre, setArrastre] = useState<{ titulo: string; x: number; y: number } | null>(
@@ -712,6 +714,7 @@ export default function Dashboard() {
         onProponerPlan={proponerPlan}
         onNuevaTarea={() => setCreando(true)}
         onVerHechas={() => setHechasAbiertas(true)}
+        onEnfoque={() => setEnfoque(true)}
         hechasRecientes={hechasRecientes.length}
       />
 
@@ -729,13 +732,34 @@ export default function Dashboard() {
               : ""}{" "}
             de {formatMin(plan.disponibles)}
           </span>
-          <button
-            type="button"
-            onClick={() => setPlan(null)}
-            className="ml-auto rounded-full px-2.5 py-1 text-[12px] font-medium text-muted transition hover:bg-white hover:text-ink"
-          >
-            Quitar
-          </button>
+          <div className="ml-auto flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setEnfoque(true)}
+              className="inline-flex items-center gap-1.5 rounded-full bg-ink px-3 py-1.5 text-[12px] font-medium text-white transition hover:bg-[#111110]"
+            >
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                className="h-3 w-3"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.9"
+                strokeLinecap="round"
+              >
+                <circle cx="12" cy="12.5" r="7.5" />
+                <path d="M12 9v4l2.5 1.5" />
+              </svg>
+              Empezar sesión
+            </button>
+            <button
+              type="button"
+              onClick={() => setPlan(null)}
+              className="rounded-full px-2.5 py-1 text-[12px] font-medium text-muted transition hover:bg-white hover:text-ink"
+            >
+              Quitar
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -993,6 +1017,15 @@ export default function Dashboard() {
           proyectos={proyectos}
           onCerrar={() => setCreando(false)}
           onCrear={crearTarea}
+        />
+      ) : null}
+
+      {enfoque ? (
+        <FocusPanel
+          tareas={tareas}
+          presupuestoInicial={plan?.disponibles ?? null}
+          onCerrar={() => setEnfoque(false)}
+          onMarcarHecha={alternarHecha}
         />
       ) : null}
 
