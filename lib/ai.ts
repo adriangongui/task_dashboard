@@ -355,7 +355,7 @@ Reglas de fecha:
 - Comprueba que el día de la semana coincide con la fecha: hoy ${hoy} es ${fechaLargaCompleta(hoy)}.
 - «a las dos» son las 14:00 salvo que diga «de la madrugada»; «mediodía» son las 12:00; «medianoche» son las 00:00.
 - Si no se dice hora, "hora" es null. Si no se puede deducir el día, "fecha" es null.
-- "titulo" es solo el asunto, sin la parte de cuándo ni «recuérdame».
+- "titulo" es solo el asunto: quita la fórmula de petición («recuérdame», «créame una alarma», «ponme un recordatorio», «avísame»…) y la parte de cuándo. Si el texto solo pide el aviso, el título puede ser "Alarma" o "Recordatorio".
 - "detalle" conserva el resto de información útil del texto.${contextoActual}`;
 
   const datos = (await pedirJSON(

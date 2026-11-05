@@ -11,11 +11,72 @@ export interface Recordatorio {
   created_at: string;
 }
 
-/** ¿El mensaje pide un recordatorio con hora? */
+const VERBO_CREAR_RECORDATORIO =
+  /^(?:cr[eé]ame|cr[eé]a|crear|hazme|haz|ponme|pon|a[nñ][aá]deme|a[nñ]ade|agrega|ag[eé]ndame|agenda|programa(?:me)?|m[aá]rcame|marca|dame|m[aá]ndame|env[ií]ame)\b/i;
+
+const SUSTANTIVO_AVISO = /\b(?:recordatorio|alarma|aviso|alerta)\b/i;
+
+/**
+ * ¿El mensaje pide crear un recordatorio? Acepta la fórmula clásica
+ * («recuérdame…») y las variantes con «recordatorio», «alarma», «aviso»
+ * o «alerta»: «créame una alarma mañana a las 8», «ponme un recordatorio»,
+ * «¿me pones un aviso?», «no me olvides de…».
+ */
 export function esPeticionRecordatorio(texto: string): boolean {
-  return /^(?:recu[eé]rdame|recordatorio|av[ií]same|acu[eé]rdate)\b/i.test(
-    texto.trim(),
-  );
+  const limpio = texto
+    .trim()
+    .replace(/^[.!¿?¡\s]+/, "")
+    .replace(/\s+/g, " ");
+
+  if (!limpio) return false;
+
+  // «recuérdame…», «avísame…», «acuérdate…», «recordármelo…»
+  if (
+    /^(?:recu[eé]rdame(?:lo|me)?|av[ií]same|acu[eé]rdate|record[aá]rme(?:lo)?)\b/i.test(
+      limpio,
+    )
+  ) {
+    return true;
+  }
+
+  // «créame una alarma», «ponme un recordatorio», «agéndame un aviso»…
+  if (
+    VERBO_CREAR_RECORDATORIO.test(limpio) &&
+    SUSTANTIVO_AVISO.test(limpio)
+  ) {
+    return true;
+  }
+
+  // «un recordatorio para mañana», «alarma a las 8», «recordatorio» a secas.
+  if (
+    /^(?:(?:un|una|el|la|mi|otro|otra)\s+)?(?:recordatorio|alarma|aviso|alerta)\b/i.test(
+      limpio,
+    )
+  ) {
+    return true;
+  }
+
+  // «quiero un recordatorio», «¿me pones una alarma?», «necesito un aviso»…
+  if (
+    /^(?:quiero|querr[ií]a|necesito|me\s+gustar[ií]a|puedes|podr[ií]as|me\s+pones|me\s+das|me\s+m[aá]ndas)\b/i.test(
+      limpio,
+    ) &&
+    SUSTANTIVO_AVISO.test(limpio)
+  ) {
+    return true;
+  }
+
+  // «¿puedes recordármelo mañana?», «que me recuerdes…», «no me olvides…»
+  if (
+    /^(?:(?:puedes|podr[ií]as)\s+(?:record[aá]rme(?:lo)?|avisarme)|que\s+me\s+recuerdes|me\s+av[ií]sas)\b/i.test(
+      limpio,
+    ) ||
+    /^no\s+(?:me|te)\s+olvides\b/i.test(limpio)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 /** "2026-11-10" + "18:00" en Madrid → ISO UTC. */

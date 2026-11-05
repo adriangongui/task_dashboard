@@ -664,7 +664,7 @@ export async function POST(request: Request) {
       "Escríbeme una tarea y te la propongo antes de crearla.\n\n" +
         "· Confirmar: te enseño lo que he entendido y espero tu «sí», «no» o un cambio.\n" +
         "· Varias tareas: «comprar pan; llamar a Ana; recoger el paquete» y te las propongo todas juntas.\n" +
-        "· Recordatorios: «recuérdame el viernes a las 18:00 llamar a Ana»; te aviso por aquí a esa hora.\n" +
+        "· Recordatorios: «recuérdame el viernes a las 18:00 llamar a Ana», «créame una alarma mañana a las 8», «ponme un recordatorio» o «avísame el lunes a las 9». Te aviso por aquí a esa hora.\n" +
         "· Ver recordatorios: «mis recordatorios» te lista los próximos avisos.\n" +
         "· Proyectos: «crea el proyecto Kerbal» y «mete en el proyecto Kerbal la tarea …».\n" +
         "· Borrar: «elimina la tarea anterior», «elimina la tarea de comprar pilas» o «elimina tareas» y te pregunto de qué columna.\n" +
