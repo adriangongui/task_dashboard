@@ -50,10 +50,23 @@ function minutosDeTexto(texto: string): number | null {
 
   if (/^media hora$/.test(limpio)) return 30;
   if (/^(?:un )?cuarto de hora$/.test(limpio)) return 15;
-  if (/^(?:una |la )?hora y media$/.test(limpio)) return 90;
-  if (/^(?:una |la )?hora y cuarto$/.test(limpio)) return 75;
-  if (/^(?:una |la )?hora$/.test(limpio)) return 60;
+  if (/^(?:una |la )?horas? y media$/.test(limpio)) return 90;
+  if (/^(?:una |la )?horas? y cuarto$/.test(limpio)) return 75;
+  if (/^(?:una |la )?horas?$/.test(limpio)) return 60;
   if (/^\d{1,3}$/.test(limpio)) return Number(limpio) || null;
+
+  // «hora y 20», «1h 20», «1 h 20», «1h20».
+  const horaYNumero = limpio.match(
+    /^(?:una\s+|la\s+)?horas?(?:\s+y\s*|\s+)(\d{1,2})$/, 
+  );
+  if (horaYNumero) return 60 + Number(horaYNumero[1]);
+
+  const horasConMinutos = limpio.match(
+    /^(\d{1,2})\s*h(?:oras?)?\s*(?:y\s*)?(\d{1,2})$/, 
+  );
+  if (horasConMinutos) {
+    return Number(horasConMinutos[1]) * 60 + Number(horasConMinutos[2]);
+  }
 
   return parsearTiempo(limpio);
 }
@@ -85,6 +98,226 @@ function extraerDuracion(texto: string): number | null | undefined {
 
 function capitalizar(texto: string): string {
   return texto.charAt(0).toUpperCase() + texto.slice(1);
+}
+
+const PALABRAS_VACIAS = new Set([
+  "hacer",
+  "haz",
+  "la",
+  "el",
+  "los",
+  "las",
+  "un",
+  "una",
+  "unos",
+  "unas",
+  "de",
+  "del",
+  "para",
+  "en",
+  "que",
+  "son",
+  "es",
+  "sea",
+  "sean",
+  "con",
+  "por",
+  "al",
+  "min",
+  "mins",
+  "minuto",
+  "minutos",
+  "hora",
+  "horas",
+  "duracion",
+  "tiempo",
+  "tarea",
+  "tareas",
+  "primera",
+  "primero",
+  "segunda",
+  "segundo",
+  "tercera",
+  "tercero",
+  "todas",
+  "todos",
+  "ambas",
+]);
+
+function palabrasClave(texto: string): string[] {
+  return normalizarTexto(texto)
+    .split(/[^a-z0-9]+/)
+    .filter(
+      (palabra) => palabra.length >= 3 && !PALABRAS_VACIAS.has(palabra),
+    );
+}
+
+/** Trocea el mensaje por comas, puntos, saltos y «y», sin romper «hora y 20». */
+function trocear(texto: string): string[] {
+  const partes = texto
+    .split(/\n|;|,|\.|\by\b/i)
+    .map((parte) => parte.trim())
+    .filter(Boolean);
+
+  const trozos: string[] = [];
+
+  for (const parte of partes) {
+    const anterior = trozos[trozos.length - 1];
+    const esFragmento =
+      /^(?:\d{1,3}\s*(?:min|mins|minutos?|m)?|media|cuarto(?:\s+de\s+hora)?|\d{1,3})$/.test(
+        parte,
+      );
+    const trasHora =
+      anterior !== undefined && /\b(?:h|hs|hr|hrs|hora|horas)$/i.test(anterior);
+
+    if (anterior !== undefined && (esFragmento || trasHora)) {
+      trozos[trozos.length - 1] = `${anterior} y ${parte}`;
+    } else {
+      trozos.push(parte);
+    }
+  }
+
+  return trozos;
+}
+
+function indicePorOrdinal(trozo: string): number {
+  const limpio = normalizarTexto(trozo);
+
+  if (/\b(?:todas|todos|ambas|las dos|las 2)\b/.test(limpio)) return -1;
+  if (/\b(?:primera|primero|1a|1ª)\b/.test(limpio)) return 0;
+  if (/\b(?:segunda|segundo|2a|2ª)\b/.test(limpio)) return 1;
+  if (/\b(?:tercera|tercero|3a|3ª)\b/.test(limpio)) return 2;
+
+  return -2;
+}
+
+function indicePorTitulo(
+  trozo: string,
+  items: Array<{ titulo: string }>,
+): number {
+  const buscadas = palabrasClave(trozo);
+  let mejor = -2;
+  let puntuacion = 0;
+
+  items.forEach((item, indice) => {
+    const propias = palabrasClave(item.titulo);
+    const coincidencias = propias.filter((palabra) =>
+      buscadas.includes(palabra),
+    ).length;
+
+    if (coincidencias > puntuacion) {
+      puntuacion = coincidencias;
+      mejor = indice;
+    }
+  });
+
+  return mejor;
+}
+
+/** Minutos que pide un trozo, quitando la referencia a la tarea. */
+function minutosDeTrozo(
+  trozo: string,
+  titulo?: string,
+): number | null | undefined {
+  let resto = normalizarTexto(trozo);
+
+  if (titulo) {
+    for (const palabra of palabrasClave(titulo)) {
+      resto = resto.replace(new RegExp(`\\b${palabra}\\b`, "g"), " ");
+    }
+  }
+
+  resto = resto
+    .replace(/\b(?:la|el)\s+(?:duracion|tiempo)\b/g, " ")
+    .replace(/\b(?:la|el)\s+de\b/g, " ")
+    .replace(/\b(?:la|el)\s+(?:primera|primero|segunda|segundo|tercera|tercero)\b/g, " ")
+    .replace(/\b(?:todas|todos|ambas|las dos)\b/g, " ")
+    .replace(/\b(?:tarea|tareas)\b/g, " ")
+    .replace(/\b(?:son|sea|sean|que|dure|dura|ponle|pon|deja|dejala)\b/g, " ")
+    .replace(/^\s*(?:a|en|de|es)\s+/g, " ")
+    .replace(/^\s*(?:es|a|en|de)\s*$/, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!resto) return undefined;
+
+  const minutos = minutosDeTexto(resto);
+  return minutos ?? undefined;
+}
+
+export interface CambioEnLote {
+  /** Índice de la tarea, o -1 para todas. */
+  indice: number;
+  cambio: CambioPropuesta;
+}
+
+/**
+ * Cambios sobre una propuesta con varias tareas: «mates 30 minutos y dibujo
+ * 1h 20», «la primera 20 y la segunda 40», «todas 30».
+ */
+export function interpretarCorrecciones(
+  texto: string,
+  items: Array<{
+    titulo: string;
+    tipo: Tipo;
+    proyectoNombre: string | null;
+    duracion: number | null;
+  }>,
+  proyectos: string[],
+): CambioEnLote[] {
+  if (items.length === 0) return [];
+
+  if (items.length === 1) {
+    const cambio = interpretarCorreccion(texto, items[0], proyectos);
+    return cambio ? [{ indice: 0, cambio }] : [];
+  }
+
+  const cambios: CambioEnLote[] = [];
+
+  // Destino común: «todo para mañana», «en el proyecto Kerbal».
+  const destino = interpretarDestinoRapido(texto, proyectos);
+  if (destino && destino.accion !== "cancelar" && destino.accion !== "duda") {
+    cambios.push({
+      indice: -1,
+      cambio:
+        destino.accion === "proyecto"
+          ? { tipo: "proyecto", proyectoNombre: destino.proyecto }
+          : { tipo: destino.accion, proyectoNombre: null },
+    });
+  }
+
+  const asignadas = new Set<number>();
+
+  for (const trozo of trocear(texto)) {
+    let indice = indicePorOrdinal(trozo);
+    if (indice === -2) indice = indicePorTitulo(trozo, items);
+
+    const titulo = indice >= 0 ? items[indice]?.titulo : undefined;
+    const minutos = minutosDeTrozo(trozo, titulo);
+
+    if (minutos === undefined) continue;
+
+    if (indice === -2) {
+      const libres = items
+        .map((_, posicion) => posicion)
+        .filter((posicion) => !asignadas.has(posicion));
+
+      if (libres.length !== 1) continue;
+      indice = libres[0];
+    }
+
+    if (indice === -1) {
+      items.forEach((_, posicion) => {
+        cambios.push({ indice: posicion, cambio: { duracion: minutos } });
+        asignadas.add(posicion);
+      });
+    } else {
+      cambios.push({ indice, cambio: { duracion: minutos } });
+      asignadas.add(indice);
+    }
+  }
+
+  return cambios;
 }
 
 function extraerTitulo(texto: string): string | null {

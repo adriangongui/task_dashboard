@@ -1,11 +1,14 @@
 import {
-  clasificarTarea,
   clasificarTareas,
   interpretarDestino,
   interpretarRecordatorio,
 } from "@/lib/ai";
 import { parsearComando } from "@/lib/comandos";
-import { interpretarCorreccion, type CambioPropuesta } from "@/lib/correccion";
+import {
+  interpretarCorreccion,
+  interpretarCorrecciones,
+  type CambioPropuesta,
+} from "@/lib/correccion";
 import { hoyISO, mananaISO } from "@/lib/dates";
 import { interpretarDestinoRapido, normalizarTexto } from "@/lib/destino";
 import {
@@ -366,7 +369,7 @@ async function proponerItems(
       ? "Responde «sí» o «no», o pulsa «Editar» para copiar el recordatorio y cambiar lo que quieras."
       : unico
         ? "Responde «sí» o «no», o dime qué cambio: «el título es …», «mejor mañana», «en el proyecto …», «cambia la duración a 45 min»."
-        : "Responde «sí» o «no». Si algo no encaja, cancela y mándamelo otra vez.";
+        : "Responde «sí» o «no». Para ajustar tiempos: «mates 30 min y dibujo 1h 20», «la primera 20 y la segunda 40» o «todas 30 minutos». «cancela» para dejarlo.";
 
   const listado = items.map(resumenItem).join("\n");
 
@@ -674,12 +677,32 @@ export async function POST(request: Request) {
 
         if (!respuestaAfirmativa(texto)) {
           const unico = items.length === 1 ? items[0] : null;
-          let actualizado: ItemPropuesta | null = null;
+          let actualizados: ItemPropuesta[] | null = null;
 
-          if (unico?.clase === "tarea") {
+          // Varias tareas: cambios por tarea («mates 30 min y dibujo 1h 20»).
+          if (items.length > 1 && items.every((item) => item.clase === "tarea")) {
+            const tareas = items as TareaPropuesta[];
+            const cambios = interpretarCorrecciones(texto, tareas, nombres);
+
+            if (cambios.length > 0) {
+              actualizados = tareas.map((tarea, indice) => {
+                const suyo = cambios.filter(
+                  (cambio) => cambio.indice === indice || cambio.indice === -1,
+                );
+
+                return suyo.reduce(
+                  (resultado, cambio) =>
+                    aplicarCorreccion(resultado, cambio.cambio, listaProyectos),
+                  tarea,
+                );
+              });
+            }
+          } else if (unico?.clase === "tarea") {
             const cambio = interpretarCorreccion(texto, unico, nombres);
             if (cambio) {
-              actualizado = aplicarCorreccion(unico, cambio, listaProyectos);
+              actualizados = [
+                aplicarCorreccion(unico, cambio, listaProyectos),
+              ];
             }
           } else if (unico?.clase === "recordatorio") {
             const interpretado = await interpretarRecordatorio(texto, {
@@ -689,19 +712,21 @@ export async function POST(request: Request) {
             });
 
             if (interpretado.recordarAt) {
-              actualizado = {
-                clase: "recordatorio",
-                titulo: interpretado.titulo,
-                detalle: interpretado.detalle,
-                recordarAt: interpretado.recordarAt,
-              };
+              actualizados = [
+                {
+                  clase: "recordatorio",
+                  titulo: interpretado.titulo,
+                  detalle: interpretado.detalle,
+                  recordarAt: interpretado.recordarAt,
+                },
+              ];
             }
           }
 
-          if (actualizado) {
+          if (actualizados) {
             await proponerItems(
               chatId,
-              [actualizado],
+              actualizados,
               "✏️ He actualizado la propuesta.",
             );
             return Response.json({
@@ -867,16 +892,20 @@ export async function POST(request: Request) {
         return Response.json({ ok: true });
       }
 
-      const clasificacion = await clasificarTarea(texto, nombres);
-      await proponerTarea(chatId, {
-        titulo: clasificacion.titulo,
-        detalle: clasificacion.detalle,
-        tipo: "proyecto",
-        duracion: clasificacion.duracion_estimada_min,
-        paralelizable: clasificacion.paralelizable,
-        proyectoId: proyecto.id,
-        proyectoNombre: proyecto.nombre,
-      });
+      const clasificaciones = await clasificarTareas(texto, nombres);
+      await proponerItems(
+        chatId,
+        clasificaciones.map((clasificacion) => ({
+          clase: "tarea" as const,
+          titulo: clasificacion.titulo,
+          detalle: clasificacion.detalle,
+          tipo: "proyecto" as const,
+          duracion: clasificacion.duracion_estimada_min,
+          paralelizable: clasificacion.paralelizable,
+          proyectoId: proyecto.id,
+          proyectoNombre: proyecto.nombre,
+        })),
+      );
       return Response.json({ ok: true, pregunta: true, confirmar: true });
     }
 
@@ -993,16 +1022,20 @@ export async function POST(request: Request) {
         return Response.json({ ok: true, pregunta: true });
       }
 
-      const clasificacion = await clasificarTarea(comando.tarea, nombres);
-      await proponerTarea(chatId, {
-        titulo: clasificacion.titulo,
-        detalle: clasificacion.detalle,
-        tipo: "proyecto",
-        duracion: clasificacion.duracion_estimada_min,
-        paralelizable: clasificacion.paralelizable,
-        proyectoId: proyecto.id,
-        proyectoNombre: proyecto.nombre,
-      });
+      const clasificaciones = await clasificarTareas(comando.tarea, nombres);
+      await proponerItems(
+        chatId,
+        clasificaciones.map((clasificacion) => ({
+          clase: "tarea" as const,
+          titulo: clasificacion.titulo,
+          detalle: clasificacion.detalle,
+          tipo: "proyecto" as const,
+          duracion: clasificacion.duracion_estimada_min,
+          paralelizable: clasificacion.paralelizable,
+          proyectoId: proyecto.id,
+          proyectoNombre: proyecto.nombre,
+        })),
+      );
       return Response.json({ ok: true, pregunta: true, confirmar: true });
     }
 

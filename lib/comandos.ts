@@ -29,7 +29,7 @@ export function parsearComando(texto: string): Comando | null {
   }
 
   const anadirTareaPrimero = limpio.match(
-    /^(?:mete|a[nñ]ade|agrega|pon|guarda)\s+(?:la\s+)?tarea\s+(.+?)\s+(?:en|al|dentro\s+del)\s+(?:el\s+)?proyecto\s+(.+)$/i,
+    /^(?:mete|a[nñ]ade|agrega|pon|guarda)\s+(?:(?:la|las|estas|esas)\s+)?tareas?\s*:?\s+(.+?)\s+(?:en|al|dentro\s+del)\s+(?:el\s+)?proyecto\s+(.+)$/i,
   );
   if (anadirTareaPrimero) {
     return {
@@ -40,7 +40,7 @@ export function parsearComando(texto: string): Comando | null {
   }
 
   const anadirProyectoPrimero = limpio.match(
-    /^(?:mete|a[nñ]ade|agrega|pon|guarda)\s+(?:en|al|dentro\s+del)\s+(?:el\s+)?proyecto\s+(.+?)\s+(?:la\s+)?tarea\s+(.+)$/i,
+    /^(?:mete|a[nñ]ade|agrega|pon|guarda)\s+(?:en|al|dentro\s+del)\s+(?:el\s+)?proyecto\s+(.+?)\s+(?:(?:la|las|estas|esas|una|un)\s+)?tareas?\s*:?\s+(.+)$/i,
   );
   if (anadirProyectoPrimero) {
     return {
@@ -51,7 +51,7 @@ export function parsearComando(texto: string): Comando | null {
   }
 
   const anadirSinTarea = limpio.match(
-    /^(?:mete|a[nñ]ade|agrega|pon|guarda)\s+(?:en|al|dentro\s+del)\s+(?:el\s+)?proyecto\s+(.+)$/i,
+    /^(?:mete|a[nñ]ade|agrega|pon|guarda)\s+(?:en|al|dentro\s+del)\s+(?:el\s+)?proyecto\s+(.+?)(?:\s+(?:una|la)\s+tareas?)?$/i,
   );
   if (anadirSinTarea) {
     return {
