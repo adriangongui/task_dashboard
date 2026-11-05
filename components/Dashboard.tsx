@@ -915,7 +915,7 @@ export default function Dashboard() {
                 className="fixed inset-0 z-40 overflow-y-auto bg-canvas"
                 aria-label={`${titulo} a pantalla completa`}
               >
-                <div className="mx-auto w-full max-w-[780px] px-4 pb-28 pt-4 sm:px-6 sm:pt-6">
+                <div className="mx-auto w-full max-w-[1280px] px-4 pb-28 pt-4 sm:px-6 sm:pt-6">
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -962,9 +962,9 @@ export default function Dashboard() {
                     </span>
                   </div>
 
-                  <div className="mt-5 flex flex-col gap-2.5">
+                  <div className="mt-5 grid grid-cols-1 content-start items-start gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
                     {lista.length === 0 ? (
-                      <p className="rounded-card border border-dashed border-line px-4 py-8 text-center text-[13px] text-muted">
+                      <p className="rounded-card border border-dashed border-line px-4 py-8 text-center text-[13px] text-muted sm:col-span-2 lg:col-span-3">
                         No hay tareas pendientes aquí.
                       </p>
                     ) : foco.tipo === "columna" ? (
