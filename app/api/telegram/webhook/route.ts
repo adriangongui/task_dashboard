@@ -7,6 +7,7 @@ import { parsearComando } from "@/lib/comandos";
 import {
   interpretarCorreccion,
   interpretarCorrecciones,
+  parsearBorradorTareas,
   type CambioPropuesta,
 } from "@/lib/correccion";
 import { hoyISO, mananaISO } from "@/lib/dates";
@@ -74,20 +75,19 @@ function fechaParaTipo(tipo: Tipo): string | null {
 type Teclado = { inline_keyboard: Array<Array<Record<string, unknown>>> };
 
 function botonesConfirmar(borrador?: string): Teclado {
-  const filas: Array<Array<Record<string, unknown>>> = [
-    [
-      { text: "✅ Sí, crear", callback_data: "propuesta:si" },
-      { text: "❌ No, cancelar", callback_data: "propuesta:no" },
-    ],
+  const fila: Array<Record<string, unknown>> = [
+    { text: "❌ No, cancelar", callback_data: "propuesta:no" },
   ];
 
-  // El botón copia un borrador que se puede pegar en el campo de texto y
-  // retocar antes de mandarlo.
+  // El botón copia una plantilla que se puede pegar en el campo de texto y
+  // retocar antes de mandarla.
   if (borrador) {
-    filas.push([{ text: "✏️ Editar", copy_text: { text: borrador } }]);
+    fila.push({ text: "✏️ Editar", copy_text: { text: borrador } });
   }
 
-  return { inline_keyboard: filas };
+  fila.push({ text: "✅ Sí, crear", callback_data: "propuesta:si" });
+
+  return { inline_keyboard: [fila] };
 }
 
 async function enviarMensaje(
@@ -317,6 +317,38 @@ function textoBorrador(item: ItemPropuesta): string | undefined {
     : undefined;
 }
 
+/** Plantilla de una tarea con los campos que entiende el bot al pegarla. */
+function borradorTarea(item: TareaPropuesta): string {
+  const cuando =
+    item.tipo === "proyecto"
+      ? "proyecto"
+      : item.tipo === "semana"
+        ? "esta semana"
+        : item.tipo === "manana"
+          ? "mañana"
+          : "hoy";
+
+  return [
+    `Título: ${item.titulo}`,
+    `Cuándo: ${cuando}`,
+    `Duración: ${item.duracion ? `${item.duracion} min` : "sin duración"}`,
+    `Proyecto: ${item.proyectoNombre ?? "sin proyecto"}`,
+  ].join(" | ");
+}
+
+function borradorDe(items: ItemPropuesta[]): string | undefined {
+  if (items.length === 0) return undefined;
+
+  if (items.every((item) => item.clase === "tarea")) {
+    const texto = (items as TareaPropuesta[]).map(borradorTarea).join("\n");
+    // Telegram limita copy_text a 256 caracteres.
+    return texto.length <= 256 ? texto : undefined;
+  }
+
+  const unico = items.length === 1 ? items[0] : null;
+  return unico ? textoBorrador(unico) : undefined;
+}
+
 /** Aplica un cambio pedido por el usuario sobre la propuesta pendiente. */
 function aplicarCorreccion(
   propuesta: TareaPropuesta,
@@ -368,15 +400,15 @@ async function proponerItems(
     unico?.clase === "recordatorio"
       ? "Responde «sí» o «no», o pulsa «Editar» para copiar el recordatorio y cambiar lo que quieras."
       : unico
-        ? "Responde «sí» o «no», o dime qué cambio: «el título es …», «mejor mañana», «en el proyecto …», «cambia la duración a 45 min»."
-        : "Responde «sí» o «no». Para ajustar tiempos: «mates 30 min y dibujo 1h 20», «la primera 20 y la segunda 40» o «todas 30 minutos». «cancela» para dejarlo.";
+        ? "Responde «sí» o «no», pulsa ✏️ Editar para copiar la plantilla y retocarla, o dime el cambio: «el título es …», «mejor mañana», «en el proyecto …», «cambia la duración a 45 min»."
+        : "Responde «sí» o «no», o pulsa ✏️ Editar para copiar una plantilla con título, cuándo, duración y proyecto y retocarla. También valen «mates 30 min y dibujo 1h 20», «la primera 20 y la segunda 40» o «todas 30 minutos». «cancela» para dejarlo.";
 
   const listado = items.map(resumenItem).join("\n");
 
   await enviarMensaje(
     chatId,
     `${nota ? `${nota}\n\n` : ""}${pregunta}\n\n${listado}\n\n${ayuda}`,
-    { botones: true, borrador: unico ? textoBorrador(unico) : undefined },
+    { botones: true, borrador: borradorDe(items) },
   );
 }
 
@@ -679,6 +711,84 @@ export async function POST(request: Request) {
           const unico = items.length === 1 ? items[0] : null;
           let actualizados: ItemPropuesta[] | null = null;
 
+          // Plantilla copiada con «Editar» y pegada de vuelta.
+          const borradorPegado = parsearBorradorTareas(texto);
+
+          if (borradorPegado) {
+            const tareas = items as TareaPropuesta[];
+
+            if (
+              !items.every((item) => item.clase === "tarea") ||
+              borradorPegado.length !== items.length
+            ) {
+              await enviarMensaje(
+                chatId,
+                `El borrador trae ${borradorPegado.length} línea(s) y hay ${items.length} propuesta(s). Deja una línea por tarea y vuelve a pegarlo.`,
+                { botones: true, borrador: borradorDe(items) },
+              );
+              return Response.json({ ok: true, pregunta: true });
+            }
+
+            const propuestos: ItemPropuesta[] = [];
+            let proyectoInexistente: string | null = null;
+
+            for (let indice = 0; indice < tareas.length; indice += 1) {
+              const tarea = tareas[indice];
+              const borrador = borradorPegado[indice];
+              const proyecto = borrador.proyectoNombre
+                ? buscarProyecto(borrador.proyectoNombre, listaProyectos)
+                : undefined;
+
+              if (borrador.proyectoNombre && !proyecto) {
+                proyectoInexistente = borrador.proyectoNombre;
+                break;
+              }
+
+              const tipo: Tipo = proyecto
+                ? "proyecto"
+                : (borrador.tipo ??
+                  (borrador.proyectoNombre === null && tarea.tipo === "proyecto"
+                    ? "hoy"
+                    : tarea.tipo));
+
+              propuestos.push({
+                ...tarea,
+                titulo: borrador.titulo ?? tarea.titulo,
+                tipo,
+                duracion:
+                  "duracion" in borrador
+                    ? (borrador.duracion ?? null)
+                    : tarea.duracion,
+                proyectoId:
+                  proyecto?.id ?? (tipo === "proyecto" ? tarea.proyectoId : null),
+                proyectoNombre:
+                  proyecto?.nombre ??
+                  (tipo === "proyecto" ? tarea.proyectoNombre : null),
+              });
+            }
+
+            if (proyectoInexistente) {
+              await enviarMensaje(
+                chatId,
+                `No existe el proyecto «${proyectoInexistente}». Dime «crea el proyecto ${proyectoInexistente}» o cambia esa línea del borrador.`,
+                { botones: true, borrador: borradorDe(items) },
+              );
+              return Response.json({ ok: true, pregunta: true });
+            }
+
+            await proponerItems(
+              chatId,
+              propuestos,
+              "✏️ He aplicado tu borrador.",
+            );
+            return Response.json({
+              ok: true,
+              pregunta: true,
+              confirmar: true,
+              actualizada: true,
+            });
+          }
+
           // Varias tareas: cambios por tarea («mates 30 min y dibujo 1h 20»).
           if (items.length > 1 && items.every((item) => item.clase === "tarea")) {
             const tareas = items as TareaPropuesta[];
@@ -742,7 +852,7 @@ export async function POST(request: Request) {
             `No te he entendido. Responde «sí» o «no», o dime qué cambio: «el título es …», «mejor mañana», «en el proyecto …» o «cambia la duración a 45 min».\n\n${items
               .map(resumenItem)
               .join("\n")}`,
-            { botones: true, borrador: unico ? textoBorrador(unico) : undefined },
+            { botones: true, borrador: borradorDe(items) },
           );
           return Response.json({ ok: true, pregunta: true });
         }

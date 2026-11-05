@@ -245,6 +245,83 @@ function minutosDeTrozo(
   return minutos ?? undefined;
 }
 
+export interface BorradorTarea {
+  titulo?: string;
+  tipo?: Tipo;
+  duracion?: number | null;
+  proyectoNombre?: string | null;
+}
+
+/** Reconoce la plantilla que copia el botón «Editar» y sus retoques. */
+export function parsearBorradorTareas(texto: string): BorradorTarea[] | null {
+  const lineas = texto
+    .split("\n")
+    .map((linea) => linea.trim())
+    .filter(Boolean);
+
+  if (lineas.length === 0) return null;
+
+  const items: BorradorTarea[] = [];
+
+  for (const linea of lineas) {
+    if (!linea.includes("|")) return null;
+
+    const campos = linea.split("|").map((campo) => campo.trim());
+    const item: BorradorTarea = {};
+    let tieneTitulo = false;
+
+    for (const campo of campos) {
+      const corte = campo.indexOf(":");
+      if (corte < 0) continue;
+
+      const clave = normalizarTexto(campo.slice(0, corte));
+      const valor = campo.slice(corte + 1).trim();
+      if (!valor) continue;
+
+      if (clave.startsWith("titulo")) {
+        item.titulo = limpiarTitulo(valor);
+        tieneTitulo = true;
+      } else if (
+        clave.startsWith("cuando") ||
+        clave.startsWith("columna") ||
+        clave.startsWith("destino")
+      ) {
+        const destino = interpretarDestinoRapido(valor, []);
+
+        if (destino && ["hoy", "manana", "semana"].includes(destino.accion)) {
+          item.tipo = destino.accion as Tipo;
+        } else if (destino?.accion === "proyecto") {
+          item.tipo = "proyecto";
+        }
+      } else if (
+        clave.startsWith("duracion") ||
+        clave.startsWith("tiempo")
+      ) {
+        const limpio = normalizarTexto(valor);
+
+        if (/^(?:sin|ninguna|ninguno|nada|-|—|0)$/.test(limpio)) {
+          item.duracion = null;
+        } else {
+          const minutos = minutosDeTexto(limpio);
+          if (minutos) item.duracion = minutos;
+        }
+      } else if (clave.startsWith("proyecto")) {
+        const limpio = normalizarTexto(valor);
+        item.proyectoNombre = /^(?:sin(?:\s+proyecto)?|ninguno?|ninguna|-|—|0)$/.test(
+          limpio,
+        )
+          ? null
+          : valor;
+      }
+    }
+
+    if (!tieneTitulo) return null;
+    items.push(item);
+  }
+
+  return items;
+}
+
 export interface CambioEnLote {
   /** Índice de la tarea, o -1 para todas. */
   indice: number;
