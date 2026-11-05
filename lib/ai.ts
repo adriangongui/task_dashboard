@@ -1,4 +1,5 @@
 import { interpretarDestinoRapido, normalizarTexto } from "./destino";
+import { fechaHoraLarga, madridAISO, partesMadrid } from "./recordatorios";
 import { limpiarTitulo } from "./titulo";
 import type { Clasificacion, DestinoResuelto, Tipo } from "./types";
 
@@ -27,14 +28,23 @@ Recibirás el texto de una nota (a veces desordenada, larga o transcrita de voz)
 Devuelve SOLO un JSON válido, sin markdown ni explicaciones, con esta forma exacta:
 
 {
-  "titulo": "resumen corto de máximo 8 palabras, en imperativo",
-  "detalle": "el texto original, pulido pero sin recortar información",
-  "tipo": "hoy" | "manana" | "semana" | "proyecto",
-  "duracion_estimada_min": número entero o null si no se puede estimar,
-  "paralelizable": true/false,
-  "proyecto_sugerido": "nombre del proyecto si detecta que pertenece a uno existente, o null",
-  "destino_claro": true/false
+  "tareas": [
+    {
+      "titulo": "resumen corto de máximo 8 palabras, en imperativo",
+      "detalle": "el texto original, pulido pero sin recortar información",
+      "tipo": "hoy" | "manana" | "semana" | "proyecto",
+      "duracion_estimada_min": número entero o null si no se puede estimar,
+      "paralelizable": true/false,
+      "proyecto_sugerido": "nombre del proyecto si detecta que pertenece a uno existente, o null",
+      "destino_claro": true/false
+    }
+  ]
 }
+
+Cuántas tareas devolver:
+- Una sola si la nota cuenta una cosa, aunque sea larga.
+- Varias (máximo 6) solo si la nota enumera acciones separadas: una por línea, con guiones o números, o unidas por «y» con verbos distintos («comprar pan y llamar a Ana»). Cada una con su título y su detalle.
+- Nunca inventes tareas que no estén escritas.
 
 PROYECTOS EXISTENTES:
 ${listaProyectos}
@@ -164,16 +174,110 @@ function normalizar(datos: unknown, textoOriginal: string): Clasificacion {
   };
 }
 
+export async function clasificarTareas(
+  texto: string,
+  proyectos: string[],
+): Promise<Clasificacion[]> {
+  const datos = (await pedirJSON(
+    construirPrompt(proyectos),
+    `Texto de la nota:\n"""\n${texto}\n"""`,
+  )) as Record<string, unknown>;
+
+  const crudas = Array.isArray(datos.tareas) ? datos.tareas : [datos];
+
+  const tareas = crudas
+    .filter((item) => item && typeof item === "object")
+    .map((item) => normalizar(item, texto))
+    .filter((tarea) => tarea.titulo.length > 0)
+    .slice(0, 6);
+
+  return tareas.length > 0 ? tareas : [normalizar({}, texto)];
+}
+
+/** Primera tarea de la nota (atajos de proyecto). */
 export async function clasificarTarea(
   texto: string,
   proyectos: string[],
 ): Promise<Clasificacion> {
-  const datos = await pedirJSON(
-    construirPrompt(proyectos),
-    `Texto de la nota:\n"""\n${texto}\n"""`,
-  );
+  const [tarea] = await clasificarTareas(texto, proyectos);
+  return tarea;
+}
 
-  return normalizar(datos, texto);
+export interface RecordatorioInterpretado {
+  titulo: string;
+  detalle: string;
+  recordarAt: string | null;
+}
+
+/**
+ * Convierte «recuérdame el viernes a las 18:00 llamar a Ana» en un recordatorio
+ * con fecha y hora en Madrid. Si el texto no dice cuándo, `recordarAt` es null.
+ */
+export async function interpretarRecordatorio(
+  texto: string,
+  actual?: { titulo: string; detalle: string; recordarAt: string },
+): Promise<RecordatorioInterpretado> {
+  const ahora = fechaHoraLarga(new Date().toISOString());
+
+  let contextoActual = "";
+  if (actual) {
+    const { fecha, hora } = partesMadrid(actual.recordarAt);
+    contextoActual = `
+
+Recordatorio actual (cambia solo lo que pida el texto):
+- asunto: ${actual.titulo}
+- detalle: ${actual.detalle}
+- cuándo: ${fecha} a las ${hora} (${fechaHoraLarga(actual.recordarAt)})`;
+  }
+
+  const sistema = `Eres el asistente de recordatorios de un gestor personal. Ahora es ${ahora} en Europe/Madrid.
+
+Devuelve SOLO un JSON válido, sin markdown ni explicaciones:
+{"titulo": "asunto corto en imperativo", "detalle": "texto original pulido", "fecha": "YYYY-MM-DD o null", "hora": "HH:mm o null"}
+
+Reglas:
+- Interpreta fechas relativas («mañana», «pasado mañana», «el viernes», «en dos horas», «esta tarde») con la fecha actual de Madrid.
+- Si no se dice hora, "hora" es null. Si no se puede deducir el día, "fecha" es null.
+- "titulo" es solo el asunto, sin la parte de cuándo ni «recuérdame».
+- "detalle" conserva el resto de información útil del texto.${contextoActual}`;
+
+  const datos = (await pedirJSON(
+    sistema,
+    `Texto: """${texto}"""`,
+  )) as Record<string, unknown>;
+
+  const titulo =
+    typeof datos.titulo === "string" && datos.titulo.trim().length > 0
+      ? limpiarTitulo(datos.titulo.trim()).slice(0, 120)
+      : limpiarTitulo(texto.trim()).slice(0, 120);
+
+  const detalle =
+    typeof datos.detalle === "string" && datos.detalle.trim().length > 0
+      ? datos.detalle.trim()
+      : texto.trim();
+
+  const fecha =
+    typeof datos.fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(datos.fecha.trim())
+      ? datos.fecha.trim()
+      : null;
+
+  const hora =
+    typeof datos.hora === "string" && /^\d{1,2}:\d{2}$/.test(datos.hora.trim())
+      ? datos.hora.trim().padStart(5, "0")
+      : null;
+
+  let recordarAt: string | null = null;
+
+  if (fecha || hora) {
+    const base = actual ? partesMadrid(actual.recordarAt) : null;
+    const dia = fecha ?? base?.fecha ?? null;
+    const momento = hora ?? base?.hora ?? null;
+    if (dia && momento) recordarAt = madridAISO(dia, momento);
+  }
+
+  if (!recordarAt && actual) recordarAt = actual.recordarAt;
+
+  return { titulo, detalle, recordarAt };
 }
 
 /**

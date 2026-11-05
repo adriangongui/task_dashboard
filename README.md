@@ -3,7 +3,7 @@
 Sistema personal de gestión de tareas con dos caras:
 
 - **Bot de Telegram** (`/api/telegram/webhook`): mandas una nota de texto (o una transcripción de voz) y Groq la convierte en una propuesta de tarea (título corto, tipo, duración estimada, si es paralelizable y proyecto) que confirmas con «sí» antes de que se guarde.
-- **Panel web** (Next.js 14 App Router + InsForge): columnas Hoy / Mañana / Esta semana / Proyectos futuros / Sin terminar, arrastre de tareas entre columnas, historial de las hechas en los últimos 3 días, progreso por proyecto, detalle en panel lateral, plan del día según el tiempo que tengas y alta manual de tareas eligiendo destino. El panel pide una contraseña antes de mostrar nada.
+- **Panel web** (Next.js 14 App Router + InsForge): columnas Hoy / Mañana / Esta semana / Proyectos futuros / Sin terminar, arrastre de tareas entre columnas, historial de las hechas en los últimos 3 días, progreso por proyecto, detalle en panel lateral, plan del día según el tiempo que tengas y alta manual de tareas eligiendo destino. El panel pide una contraseña antes de mostrar nada y cada columna o proyecto se puede abrir a pantalla completa, solo con sus tareas.
 
 ```
 Telegram  →  /api/telegram/webhook  →  Groq (clasifica)  →  InsForge (Postgres)
@@ -115,6 +115,8 @@ Detalles del webhook:
 - Devuelve `200` siempre que el update esté bien formado, para que Telegram no reintente en bucle; si Groq o InsForge fallan, el error se cuenta en el chat y la tarea no se da por guardada.
 - **Nada se crea sin confirmar**: en cuanto la tarea tiene título y destino, el bot responde «¿Creo esta tarea?» con el título, dónde iría, la duración y dos botones, **✅ Sí, crearla** y **❌ No, cancelar** (los pulsas y se envían solos). También valen por texto «sí», «vale», «ok», «adelante»; «no» la descarta. La propuesta vive en `estados_chat` con `accion = confirmar_tarea`, así que sobrevive a reinicios.
 - **Corregir antes de crear**: en vez de «sí» o «no» puedes decir el cambio: «la tarea es up convives», «sería que el título es …», «mejor mañana», «en el proyecto Kerbal». El bot reescribe la propuesta y vuelve a pedir confirmación, sin crear nada. Si le mandas otra orden («crea el proyecto X»), descarta la propuesta y ejecuta la orden.
+- **Varias tareas en un mensaje**: si la nota enumera cosas («comprar pan; llamar a Ana; recoger el paquete»), el clasificador devuelve una lista y el bot propone todas juntas antes de crearlas. Si alguna no dice cuándo va, pregunta una vez por todas.
+- **Recordatorios con hora**: «recuérdame el viernes a las 18:00 llamar a Ana». El bot propone el asunto y la fecha, y a esa hora te manda un mensaje al chat. Si no dices cuándo, te lo pregunta. El botón **✏️ Editar** copia al portapapeles un borrador (`recuérdame el 14/11/2026 a las 18:00: Llamar a Ana`): lo pegas en el campo de texto, cambias lo que quieras y lo mandas.
 - Los proyectos **solo se crean si lo pides**: «crea el proyecto Kerbal» o «crea un nuevo proyecto titulado Kerbal». Si el clasificador sugiere un proyecto que no existe, la tarea se guarda sin proyecto.
 - Para meter una tarea en un proyecto: «mete en el proyecto Kerbal la tarea jugar al roblox». Si no dices la tarea, el bot pregunta «¿Qué tarea meto en Kerbal?» y usa tu siguiente mensaje.
 - Borrar por chat: «elimina la tarea anterior» (la última que creó el bot), «elimina la tarea de comprar pan» (por título) o «elimina tareas» → pregunta «hoy», «mañana» o «esta semana», lista esa columna numerada y borra la que elijas por número o título. El estado de cada conversación vive en la tabla `estados_chat`.
@@ -172,6 +174,10 @@ Duración desconocida = 30 min. Entradas de tiempo aceptadas: `2h 30min`, `1,5h`
 
 `tareas_pendientes`: `id`, `chat_id` (único), `texto`, `titulo`, `detalle`, `duracion_estimada_min`, `paralelizable`, `created_at`. Solo la usa el servidor; no tiene acceso para `anon`.
 
+`recordatorios`: `id`, `titulo`, `detalle`, `recordar_at` (timestamptz), `enviado`, `chat_id`, `created_at`. Un schedule de InsForge llama cada minuto a `/api/recordatorios/enviar` (cabecera `x-recordatorios-token`, token guardado en `ajustes`); los que ya vencieron se mandan por Telegram y se marcan con `enviado = true`.
+
+`ajustes`: pares `clave`/`valor` del servidor (por ejemplo el token del cron de recordatorios). Sin acceso para `anon`.
+
 ## Estructura
 
 ```
@@ -179,6 +185,7 @@ app/
   api/telegram/webhook/route.ts   # recibe, clasifica, guarda y responde
   api/plan-dia/route.ts           # subconjunto sugerido de tareas de hoy
   api/cron/cerrar-dia/route.ts    # pasa las de hoy no hechas a sin_terminar
+  api/recordatorios/enviar/route.ts # manda los recordatorios vencidos por Telegram
   api/login/route.ts              # comprueba la contraseña y pone la cookie
   login/page.tsx                  # pantalla de contraseña
   layout.tsx / page.tsx / globals.css / manifest.ts   # metadatos y PWA
@@ -188,7 +195,7 @@ public/
   offline.html                    # aviso sin conexión
   icons/ y apple-touch-icon-v3.png # iconos generados desde el diseño
 components/
-  Dashboard.tsx                   # estado, mutaciones y layout responsive
+  Dashboard.tsx                   # estado, mutaciones, layout y vista a pantalla completa
   AppHeader.tsx                   # saludo, fecha y "Proponer plan"
   StatsRow.tsx                    # hechas hoy, racha, activas, sin terminar
   TaskCard.tsx                    # checkbox, badges, reasignación rápida
@@ -205,6 +212,7 @@ lib/
   insforge/client.ts              # cliente de navegador (anon key)
   insforge/server.ts              # cliente de servidor (admin API key)
   pending.ts                      # notas esperando que el usuario diga el destino
+  recordatorios.ts                # fechas en Madrid, borradores y envío de avisos
 insforge/schema.sql
 insforge/migrations/              # cambios aplicados sobre una base existente
 scripts/generar-iconos.ps1       # regenera los iconos PNG desde public/icons/app-icon.png

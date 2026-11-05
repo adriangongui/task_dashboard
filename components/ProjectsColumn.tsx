@@ -11,6 +11,7 @@ interface Props {
   expandidos: Set<string>;
   onAlternarProyecto: (id: string) => void;
   onAbrirProyecto: (proyecto: Proyecto) => void;
+  onEnfocarProyecto: (proyecto: Proyecto) => void;
   onToggleTarea: (tarea: Tarea) => void;
   onAbrirTarea: (tarea: Tarea) => void;
   zonaActiva?: string | null;
@@ -29,6 +30,7 @@ export default function ProjectsColumn({
   expandidos,
   onAlternarProyecto,
   onAbrirProyecto,
+  onEnfocarProyecto,
   onToggleTarea,
   onAbrirTarea,
   zonaActiva,
@@ -105,6 +107,26 @@ export default function ProjectsColumn({
                   </span>
                   <span className="tabular-nums">{pct}%</span>
                 </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onEnfocarProyecto(proyecto)}
+                aria-label={`Ver ${proyecto.nombre} a pantalla completa`}
+                className="mt-0.5 shrink-0 rounded-full p-2 text-muted transition hover:bg-canvas hover:text-ink"
+              >
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 20 20"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M11.5 4.5h4v4M8.5 15.5h-4v-4M15.5 4.5 11 9M4.5 15.5 9 11" />
+                </svg>
               </button>
 
               <button

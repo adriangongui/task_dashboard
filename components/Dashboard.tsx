@@ -26,6 +26,10 @@ import ProjectDetailPanel from "./ProjectDetailPanel";
 
 type TabKey = "hoy" | "manana" | "semana" | "proyectos" | "sin_terminar";
 type DestinoArrastre = "hoy" | "manana" | "semana" | "sin_terminar";
+type Foco =
+  | { tipo: "columna"; key: TabKey }
+  | { tipo: "proyecto"; id: string }
+  | null;
 
 interface Armado {
   id: string;
@@ -110,6 +114,7 @@ export default function Dashboard() {
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [creando, setCreando] = useState(false);
   const [hechasAbiertas, setHechasAbiertas] = useState(false);
+  const [foco, setFoco] = useState<Foco>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [arrastre, setArrastre] = useState<{ titulo: string; x: number; y: number } | null>(
     null,
@@ -818,6 +823,25 @@ export default function Dashboard() {
                 <span className="text-[11px] tabular-nums text-muted">
                   {cuenta[seccion.key]}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setFoco({ tipo: "columna", key: seccion.key })}
+                  aria-label={`Ver ${seccion.titulo} a pantalla completa`}
+                  className="ml-auto rounded-full p-1.5 text-muted transition hover:bg-white hover:text-ink"
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 20 20"
+                    className="h-3.5 w-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M11.5 4.5h4v4M8.5 15.5h-4v-4M15.5 4.5 11 9M4.5 15.5 9 11" />
+                  </svg>
+                </button>
               </div>
 
               {esProyectos ? (
@@ -828,6 +852,9 @@ export default function Dashboard() {
                   expandidos={expandidos}
                   onAlternarProyecto={alternarProyecto}
                   onAbrirProyecto={abrirProyecto}
+                  onEnfocarProyecto={(proyecto) =>
+                    setFoco({ tipo: "proyecto", id: proyecto.id })
+                  }
                   onToggleTarea={alternarHecha}
                   onAbrirTarea={abrirTarea}
                   zonaActiva={zonaActiva}
@@ -855,6 +882,111 @@ export default function Dashboard() {
           );
         })}
       </div>
+
+      {foco
+        ? (() => {
+            const seccion =
+              foco.tipo === "columna"
+                ? SECCIONES.find((s) => s.key === foco.key)
+                : undefined;
+            const proyecto =
+              foco.tipo === "proyecto" ? proyectosPorId.get(foco.id) : undefined;
+            const titulo = seccion?.titulo ?? proyecto?.nombre ?? "";
+            const color = seccion?.color ?? proyecto?.color ?? "#5B5DD6";
+            const lista =
+              foco.tipo === "proyecto"
+                ? tareas.filter(
+                    (t) => t.proyecto_id === foco.id && t.estado === "pendiente",
+                  )
+                : foco.key === "hoy"
+                  ? pendientesHoy
+                  : foco.key === "manana"
+                    ? pendientesManana
+                    : foco.key === "semana"
+                      ? pendientesSemana
+                      : foco.key === "sin_terminar"
+                        ? sinTerminar
+                        : tareas.filter(
+                            (t) => t.tipo === "proyecto" && t.estado === "pendiente",
+                          );
+
+            return (
+              <section
+                className="fixed inset-0 z-40 overflow-y-auto bg-canvas"
+                aria-label={`${titulo} a pantalla completa`}
+              >
+                <div className="mx-auto w-full max-w-[780px] px-4 pb-28 pt-4 sm:px-6 sm:pt-6">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFoco(null)}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-2 text-[12.5px] font-medium text-muted transition hover:text-ink"
+                    >
+                      <svg
+                        aria-hidden="true"
+                        viewBox="0 0 20 20"
+                        className="h-3.5 w-3.5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M11.5 5 6.5 10l5 5" />
+                      </svg>
+                      Volver
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFoco(null);
+                        setCreando(true);
+                      }}
+                      className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-ink px-3.5 py-2 text-[12.5px] font-medium text-white transition hover:bg-[#111110]"
+                    >
+                      + Nueva tarea
+                    </button>
+                  </div>
+
+                  <div className="mt-6 flex flex-wrap items-center gap-2.5">
+                    <span
+                      aria-hidden="true"
+                      className="h-2.5 w-2.5 rounded-full"
+                      style={{ backgroundColor: color }}
+                    />
+                    <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.02em] sm:text-[34px]">
+                      {titulo}
+                    </h1>
+                    <span className="rounded-full bg-white px-2 py-0.5 text-[12px] tabular-nums text-muted">
+                      {lista.length}
+                    </span>
+                  </div>
+
+                  <div className="mt-5 flex flex-col gap-2.5">
+                    {lista.length === 0 ? (
+                      <p className="rounded-card border border-dashed border-line px-4 py-8 text-center text-[13px] text-muted">
+                        No hay tareas pendientes aquí.
+                      </p>
+                    ) : foco.tipo === "columna" ? (
+                      renderTareas(lista, foco.key === "sin_terminar")
+                    ) : (
+                      lista.map((tarea) => (
+                        <TaskCard
+                          key={tarea.id}
+                          tarea={tarea}
+                          proyecto={proyecto}
+                          sugerida={sugeridas.has(tarea.id)}
+                          onToggle={alternarHecha}
+                          onOpen={abrirTarea}
+                        />
+                      ))
+                    )}
+                  </div>
+                </div>
+              </section>
+            );
+          })()
+        : null}
 
       {creando ? (
         <NewTaskPanel

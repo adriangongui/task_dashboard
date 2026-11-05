@@ -1,4 +1,9 @@
-import { clasificarTarea, interpretarDestino } from "@/lib/ai";
+import {
+  clasificarTarea,
+  clasificarTareas,
+  interpretarDestino,
+  interpretarRecordatorio,
+} from "@/lib/ai";
 import { parsearComando } from "@/lib/comandos";
 import { interpretarCorreccion, type CambioPropuesta } from "@/lib/correccion";
 import { hoyISO, mananaISO } from "@/lib/dates";
@@ -11,6 +16,13 @@ import {
 } from "@/lib/estado";
 import { insforgeServer } from "@/lib/insforge/server";
 import { colorParaNombre } from "@/lib/palette";
+import {
+  borradorRecordatorio,
+  esPeticionRecordatorio,
+  fechaHoraLarga,
+  guardarRecordatorio,
+  parsearBorrador,
+} from "@/lib/recordatorios";
 import {
   borrarPendiente,
   guardarPendiente,
@@ -56,19 +68,29 @@ function fechaParaTipo(tipo: Tipo): string | null {
   return null;
 }
 
-const BOTONES_CONFIRMAR = {
-  inline_keyboard: [
+type Teclado = { inline_keyboard: Array<Array<Record<string, unknown>>> };
+
+function botonesConfirmar(borrador?: string): Teclado {
+  const filas: Array<Array<Record<string, unknown>>> = [
     [
-      { text: "✅ Sí, crearla", callback_data: "tarea:si" },
-      { text: "❌ No, cancelar", callback_data: "tarea:no" },
+      { text: "✅ Sí, crear", callback_data: "propuesta:si" },
+      { text: "❌ No, cancelar", callback_data: "propuesta:no" },
     ],
-  ],
-};
+  ];
+
+  // El botón copia un borrador que se puede pegar en el campo de texto y
+  // retocar antes de mandarlo.
+  if (borrador) {
+    filas.push([{ text: "✏️ Editar", copy_text: { text: borrador } }]);
+  }
+
+  return { inline_keyboard: filas };
+}
 
 async function enviarMensaje(
   chatId: number | string,
   texto: string,
-  opciones?: { botones?: boolean },
+  opciones?: { botones?: boolean; borrador?: string },
 ) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return;
@@ -82,7 +104,9 @@ async function enviarMensaje(
         body: JSON.stringify({
           chat_id: chatId,
           text: texto,
-          ...(opciones?.botones ? { reply_markup: BOTONES_CONFIRMAR } : {}),
+          ...(opciones?.botones
+            ? { reply_markup: botonesConfirmar(opciones.borrador) }
+            : {}),
         }),
       },
     );
@@ -159,6 +183,7 @@ function preguntaDestino(titulo: string, proyectos: string[]): string {
 const TIPOS_VALIDOS: Tipo[] = ["hoy", "manana", "semana", "proyecto"];
 
 interface TareaPropuesta {
+  clase: "tarea";
   titulo: string;
   detalle: string;
   tipo: Tipo;
@@ -167,6 +192,15 @@ interface TareaPropuesta {
   proyectoId: string | null;
   proyectoNombre: string | null;
 }
+
+interface RecordatorioPropuesto {
+  clase: "recordatorio";
+  titulo: string;
+  detalle: string;
+  recordarAt: string;
+}
+
+type ItemPropuesta = TareaPropuesta | RecordatorioPropuesto;
 
 function respuestaAfirmativa(texto: string): boolean {
   if (/[👍✅👌🙌]/u.test(texto.trim())) return true;
@@ -193,13 +227,16 @@ function respuestaNegativa(texto: string): boolean {
   );
 }
 
-function leerPropuesta(datos: Record<string, unknown>): TareaPropuesta | null {
+function leerTareaPropuesta(
+  datos: Record<string, unknown>,
+): TareaPropuesta | null {
   const titulo = typeof datos.titulo === "string" ? datos.titulo : "";
   const tipo = datos.tipo as Tipo;
 
   if (!titulo || !TIPOS_VALIDOS.includes(tipo)) return null;
 
   return {
+    clase: "tarea",
     titulo,
     detalle: typeof datos.detalle === "string" ? datos.detalle : "",
     tipo,
@@ -212,14 +249,69 @@ function leerPropuesta(datos: Record<string, unknown>): TareaPropuesta | null {
   };
 }
 
-function resumenPropuesta(tarea: TareaPropuesta): string {
-  const lineas = [`• Tarea: ${tarea.titulo}`];
-  lineas.push(
-    `• Dónde: ${tarea.proyectoNombre ?? ETIQUETA_TIPO[tarea.tipo] ?? tarea.tipo}`,
-  );
-  if (tarea.duracion) lineas.push(`• Duración: ${tarea.duracion} min`);
-  if (tarea.paralelizable) lineas.push("• Paralelizable");
-  return lineas.join("\n");
+function leerItem(valor: unknown): ItemPropuesta | null {
+  if (!valor || typeof valor !== "object") return null;
+  const datos = valor as Record<string, unknown>;
+
+  if (datos.clase === "recordatorio") {
+    const titulo = typeof datos.titulo === "string" ? datos.titulo : "";
+    const recordarAt =
+      typeof datos.recordarAt === "string" ? datos.recordarAt : "";
+    const fecha = new Date(recordarAt);
+
+    if (!titulo || Number.isNaN(fecha.getTime())) return null;
+
+    return {
+      clase: "recordatorio",
+      titulo,
+      detalle: typeof datos.detalle === "string" ? datos.detalle : "",
+      recordarAt: fecha.toISOString(),
+    };
+  }
+
+  return leerTareaPropuesta(datos);
+}
+
+/** Acepta el formato nuevo (items) y las propuestas antiguas de una tarea. */
+function leerItems(datos: Record<string, unknown>): ItemPropuesta[] {
+  if (Array.isArray(datos.items)) {
+    return datos.items
+      .map(leerItem)
+      .filter((item): item is ItemPropuesta => item !== null);
+  }
+
+  const unica = leerTareaPropuesta(datos);
+  return unica ? [unica] : [];
+}
+
+function resumenItem(item: ItemPropuesta): string {
+  if (item.clase === "recordatorio") {
+    return `• ⏰ ${item.titulo} — ${fechaHoraLarga(item.recordarAt)}`;
+  }
+
+  const donde = item.proyectoNombre ?? ETIQUETA_TIPO[item.tipo] ?? item.tipo;
+  const extras = [donde];
+  if (item.duracion) extras.push(`${item.duracion} min`);
+  if (item.paralelizable) extras.push("paralelizable");
+
+  return `• ${item.titulo} · ${extras.join(" · ")}`;
+}
+
+function preguntaDestinoLote(
+  items: ItemPropuesta[],
+  proyectos: string[],
+): string {
+  const lista = items.map((item) => `• ${item.titulo}`).join("\n");
+  const extra =
+    proyectos.length > 0 ? `\nProyectos: ${proyectos.join(", ")}.` : "";
+
+  return `Tengo ${items.length} tareas:\n${lista}\n\n¿Dónde las pongo? «hoy», «mañana», «esta semana» o un proyecto.${extra}\nSi no las quieres, dime «cancela».`;
+}
+
+function textoBorrador(item: ItemPropuesta): string | undefined {
+  return item.clase === "recordatorio"
+    ? borradorRecordatorio(item.titulo, item.recordarAt)
+    : undefined;
 }
 
 /** Aplica un cambio pedido por el usuario sobre la propuesta pendiente. */
@@ -254,19 +346,54 @@ function aplicarCorreccion(
 }
 
 /** No crea nada: guarda la propuesta y espera un «sí» explícito. */
-async function proponerTarea(
+async function proponerItems(
   chatId: number | string,
-  tarea: TareaPropuesta,
+  items: ItemPropuesta[],
   nota?: string,
 ): Promise<void> {
   await guardarEstado(chatId, {
     accion: "confirmar_tarea",
-    datos: { ...tarea },
+    datos: { items },
   });
+
+  const unico = items.length === 1 ? items[0] : null;
+  const pregunta =
+    items.length === 1 ? "¿Creo esto?" : `¿Creo estas ${items.length} cosas?`;
+  const ayuda =
+    unico?.clase === "recordatorio"
+      ? "Responde «sí» o «no», o pulsa «Editar» para copiar el recordatorio y cambiar lo que quieras."
+      : unico
+        ? "Responde «sí» o «no», o dime qué cambio: «el título es …», «mejor mañana», «en el proyecto …»."
+        : "Responde «sí» o «no». Si algo no encaja, cancela y mándamelo otra vez.";
+
+  const listado = items.map(resumenItem).join("\n");
+
   await enviarMensaje(
     chatId,
-    `${nota ? `${nota}\n\n` : ""}¿Creo esta tarea?\n\n${resumenPropuesta(tarea)}\n\nResponde «sí» o «no», o dime qué cambio: «el título es …», «mejor mañana», «en el proyecto …».`,
-    { botones: true },
+    `${nota ? `${nota}\n\n` : ""}${pregunta}\n\n${listado}\n\n${ayuda}`,
+    { botones: true, borrador: unico ? textoBorrador(unico) : undefined },
+  );
+}
+
+async function proponerTarea(
+  chatId: number | string,
+  tarea: Omit<TareaPropuesta, "clase">,
+  nota?: string,
+): Promise<void> {
+  await proponerItems(chatId, [{ clase: "tarea", ...tarea }], nota);
+}
+
+async function proponerRecordatorio(
+  chatId: number | string,
+  titulo: string,
+  detalle: string,
+  recordarAt: string,
+  nota?: string,
+): Promise<void> {
+  await proponerItems(
+    chatId,
+    [{ clase: "recordatorio", titulo, detalle, recordarAt }],
+    nota,
   );
 }
 
@@ -460,7 +587,7 @@ export async function POST(request: Request) {
     const chatCallback = callback.message?.chat?.id;
     const dato = callback.data ?? "";
 
-    if (!chatCallback || !/^tarea:(si|no)$/.test(dato)) {
+    if (!chatCallback || !/^(?:tarea|propuesta):(si|no)$/.test(dato)) {
       await responderCallback(callback.id, "No sé qué hacer con eso.");
       return Response.json({ ok: true, ignored: "callback desconocido" });
     }
@@ -475,7 +602,7 @@ export async function POST(request: Request) {
       return Response.json({ ok: true, ignored: "callback caducado" });
     }
 
-    const confirmar = dato === "tarea:si";
+    const confirmar = dato.endsWith(":si");
     await responderCallback(
       callback.id,
       confirmar ? "Vale, la creo." : "Vale, no la creo.",
@@ -497,7 +624,9 @@ export async function POST(request: Request) {
     await enviarMensaje(
       chatId,
       "Escríbeme una tarea y te la propongo antes de crearla.\n\n" +
-        "· Confirmar: te enseño la tarea y espero tu «sí» (o «no» para descartarla).\n" +
+        "· Confirmar: te enseño lo que he entendido y espero tu «sí», «no» o un cambio.\n" +
+        "· Varias tareas: «comprar pan; llamar a Ana; recoger el paquete» y te las propongo todas juntas.\n" +
+        "· Recordatorios: «recuérdame el viernes a las 18:00 llamar a Ana»; te aviso por aquí a esa hora.\n" +
         "· Proyectos: «crea el proyecto Kerbal» y «mete en el proyecto Kerbal la tarea …».\n" +
         "· Borrar: «elimina la tarea anterior», «elimina la tarea de comprar pilas» o «elimina tareas» y te pregunto de qué columna.\n" +
         "· Si no tengo claro dónde va una tarea, te pregunto: «hoy», «mañana», «esta semana» o un proyecto.",
@@ -524,30 +653,53 @@ export async function POST(request: Request) {
         // el comando (abajo se procesa como siempre).
         await limpiarAccion(chatId);
       } else {
-        const propuesta = leerPropuesta(estado?.datos ?? {});
+        const items = leerItems(estado?.datos ?? {});
 
-        if (!propuesta) {
+        if (items.length === 0) {
           await limpiarAccion(chatId);
           await enviarMensaje(
             chatId,
-            "Se me ha perdido la tarea que iba a crear. Dímela otra vez.",
+            "Se me ha perdido lo que iba a crear. Dímelo otra vez.",
           );
           return Response.json({ ok: true });
         }
 
         if (respuestaNegativa(texto)) {
           await limpiarAccion(chatId);
-          await enviarMensaje(chatId, "Vale, no la creo.");
+          await enviarMensaje(chatId, "Vale, no creo nada.");
           return Response.json({ ok: true, cancelada: true });
         }
 
         if (!respuestaAfirmativa(texto)) {
-          const cambio = interpretarCorreccion(texto, propuesta, nombres);
+          const unico = items.length === 1 ? items[0] : null;
+          let actualizado: ItemPropuesta | null = null;
 
-          if (cambio) {
-            await proponerTarea(
+          if (unico?.clase === "tarea") {
+            const cambio = interpretarCorreccion(texto, unico, nombres);
+            if (cambio) {
+              actualizado = aplicarCorreccion(unico, cambio, listaProyectos);
+            }
+          } else if (unico?.clase === "recordatorio") {
+            const interpretado = await interpretarRecordatorio(texto, {
+              titulo: unico.titulo,
+              detalle: unico.detalle,
+              recordarAt: unico.recordarAt,
+            });
+
+            if (interpretado.recordarAt) {
+              actualizado = {
+                clase: "recordatorio",
+                titulo: interpretado.titulo,
+                detalle: interpretado.detalle,
+                recordarAt: interpretado.recordarAt,
+              };
+            }
+          }
+
+          if (actualizado) {
+            await proponerItems(
               chatId,
-              aplicarCorreccion(propuesta, cambio, listaProyectos),
+              [actualizado],
               "✏️ He actualizado la propuesta.",
             );
             return Response.json({
@@ -560,22 +712,132 @@ export async function POST(request: Request) {
 
           await enviarMensaje(
             chatId,
-            `No te he entendido. Responde «sí» o «no», o dime qué cambio: «el título es …», «mejor mañana» o «en el proyecto …».\n\n${resumenPropuesta(propuesta)}`,
-            { botones: true },
+            `No te he entendido. Responde «sí» o «no», o dime qué cambio: «el título es …», «mejor mañana» o «en el proyecto …».\n\n${items
+              .map(resumenItem)
+              .join("\n")}`,
+            { botones: true, borrador: unico ? textoBorrador(unico) : undefined },
           );
           return Response.json({ ok: true, pregunta: true });
         }
 
-        const id = await insertarTarea(propuesta);
-        await limpiarAccion(chatId);
-        await recordarUltimaTarea(chatId, id);
+        const tareasCreadas: string[] = [];
 
-        const donde =
-          propuesta.proyectoNombre ??
-          (ETIQUETA_TIPO[propuesta.tipo] ?? propuesta.tipo);
-        await enviarMensaje(chatId, `✅ Añadida a ${donde}: ${propuesta.titulo}`);
+        for (const item of items) {
+          if (item.clase === "tarea") {
+            const id = await insertarTarea(item);
+            tareasCreadas.push(id);
+          } else {
+            await guardarRecordatorio({
+              titulo: item.titulo,
+              detalle: item.detalle,
+              recordarAt: item.recordarAt,
+              chatId,
+            });
+          }
+        }
+
+        await limpiarAccion(chatId);
+
+        if (tareasCreadas.length === 1 && items.length === 1) {
+          await recordarUltimaTarea(chatId, tareasCreadas[0]);
+        }
+
+        const creadas = items
+          .map((item) =>
+            item.clase === "recordatorio"
+              ? `⏰ ${item.titulo} — ${fechaHoraLarga(item.recordarAt)}`
+              : `✅ ${item.titulo} → ${item.proyectoNombre ?? ETIQUETA_TIPO[item.tipo]}`,
+          )
+          .join("\n");
+
+        await enviarMensaje(
+          chatId,
+          items.length === 1 ? creadas : `Hecho, he creado ${items.length}:\n${creadas}`,
+        );
         return Response.json({ ok: true, creada: true });
       }
+    }
+
+    if (accion === "recordatorio_cuando") {
+      if (respuestaNegativa(texto)) {
+        await limpiarAccion(chatId);
+        await enviarMensaje(chatId, "Vale, no creo el recordatorio.");
+        return Response.json({ ok: true, cancelada: true });
+      }
+
+      const original = String(estado?.datos?.texto ?? "").trim();
+      const interpretado = await interpretarRecordatorio(
+        `${original}\nCuándo: ${texto}`,
+      );
+
+      if (!interpretado.recordarAt) {
+        await enviarMensaje(
+          chatId,
+          "No he sabido cuándo. Dime día y hora, por ejemplo «mañana a las 18:00» o «el viernes a las 9:30».",
+        );
+        return Response.json({ ok: true, pregunta: true });
+      }
+
+      await limpiarAccion(chatId);
+      await proponerRecordatorio(
+        chatId,
+        interpretado.titulo,
+        interpretado.detalle,
+        interpretado.recordarAt,
+      );
+      return Response.json({ ok: true, pregunta: true, confirmar: true });
+    }
+
+    if (accion === "destino_lote") {
+      const items = leerItems(estado?.datos ?? {});
+      const indices = Array.isArray(estado?.datos?.pendientes)
+        ? (estado?.datos?.pendientes as string[])
+        : [];
+
+      if (items.length === 0) {
+        await limpiarAccion(chatId);
+        await enviarMensaje(chatId, "Se me ha perdido la lista. Mándamela otra vez.");
+        return Response.json({ ok: true });
+      }
+
+      const destino = await interpretarDestino(texto, nombres, items[0].titulo);
+
+      if (destino.accion === "cancelar") {
+        await limpiarAccion(chatId);
+        await enviarMensaje(chatId, "Vale, no creo nada.");
+        return Response.json({ ok: true, cancelada: true });
+      }
+
+      const proyecto =
+        destino.accion === "proyecto" && destino.proyecto
+          ? buscarProyecto(destino.proyecto, listaProyectos)
+          : undefined;
+
+      const destinoValido =
+        proyecto !== undefined ||
+        ["hoy", "manana", "semana"].includes(destino.accion);
+
+      if (!destinoValido) {
+        await enviarMensaje(chatId, preguntaDestinoLote(items, nombres));
+        return Response.json({ ok: true, pregunta: true });
+      }
+
+      const tipo: Tipo = proyecto ? "proyecto" : (destino.accion as Tipo);
+      const actualizados = items.map((item, indice) => {
+        if (item.clase !== "tarea" || !indices.includes(String(indice))) {
+          return item;
+        }
+
+        return {
+          ...item,
+          tipo,
+          proyectoId: proyecto?.id ?? null,
+          proyectoNombre: proyecto?.nombre ?? null,
+        };
+      });
+
+      await proponerItems(chatId, actualizados);
+      return Response.json({ ok: true, pregunta: true, confirmar: true });
     }
 
     if (accion === "proyecto_tarea") {
@@ -874,33 +1136,95 @@ export async function POST(request: Request) {
     }
 
     // ---------------------------------------------------------------
-    // Nota nueva
+    // Recordatorio con hora
     // ---------------------------------------------------------------
-    const clasificacion = await clasificarTarea(texto, nombres);
+    const borrador = parsearBorrador(texto);
 
-    if (!clasificacion.destino_claro && !clasificacion.proyecto_sugerido) {
-      await guardarPendiente(chatId, clasificacion, texto);
+    if (borrador) {
+      await proponerRecordatorio(
+        chatId,
+        borrador.titulo,
+        borrador.titulo,
+        borrador.recordarAt,
+        "He leído el recordatorio que has pegado.",
+      );
+      return Response.json({ ok: true, pregunta: true, confirmar: true });
+    }
+
+    if (esPeticionRecordatorio(texto)) {
+      const interpretado = await interpretarRecordatorio(texto);
+
+      if (!interpretado.recordarAt) {
+        await guardarEstado(chatId, {
+          accion: "recordatorio_cuando",
+          datos: { texto, titulo: interpretado.titulo },
+        });
+        await enviarMensaje(
+          chatId,
+          `Vale: «${interpretado.titulo}».\n¿Para qué día y hora? Dímelo así: «mañana a las 18:00» o «el viernes a las 9:30».`,
+        );
+        return Response.json({ ok: true, pregunta: true });
+      }
+
+      await proponerRecordatorio(
+        chatId,
+        interpretado.titulo,
+        interpretado.detalle,
+        interpretado.recordarAt,
+      );
+      return Response.json({ ok: true, pregunta: true, confirmar: true });
+    }
+
+    // ---------------------------------------------------------------
+    // Nota nueva: una o varias tareas
+    // ---------------------------------------------------------------
+    const clasificaciones = await clasificarTareas(texto, nombres);
+
+    const sinDestino = clasificaciones
+      .map((clasificacion, indice) =>
+        !clasificacion.destino_claro && !clasificacion.proyecto_sugerido
+          ? indice
+          : -1,
+      )
+      .filter((indice) => indice >= 0);
+
+    const items: ItemPropuesta[] = clasificaciones.map((clasificacion) => {
+      // Los proyectos solo se crean si lo pides: aquí solo se busca uno.
+      const proyecto = clasificacion.proyecto_sugerido
+        ? buscarProyecto(clasificacion.proyecto_sugerido, listaProyectos)
+        : undefined;
+
+      return {
+        clase: "tarea",
+        titulo: clasificacion.titulo,
+        detalle: clasificacion.detalle,
+        tipo: clasificacion.tipo,
+        duracion: clasificacion.duracion_estimada_min,
+        paralelizable: clasificacion.paralelizable,
+        proyectoId: proyecto?.id ?? null,
+        proyectoNombre: proyecto?.nombre ?? null,
+      };
+    });
+
+    if (items.length === 1 && sinDestino.length === 1) {
+      await guardarPendiente(chatId, clasificaciones[0], texto);
       await enviarMensaje(
         chatId,
-        preguntaDestino(clasificacion.titulo, nombres),
+        preguntaDestino(clasificaciones[0].titulo, nombres),
       );
       return Response.json({ ok: true, pregunta: true });
     }
 
-    // Los proyectos solo se crean si lo pides: aquí solo se busca uno existente.
-    const proyecto = clasificacion.proyecto_sugerido
-      ? buscarProyecto(clasificacion.proyecto_sugerido, listaProyectos)
-      : undefined;
+    if (sinDestino.length > 0) {
+      await guardarEstado(chatId, {
+        accion: "destino_lote",
+        datos: { items, pendientes: sinDestino.map(String) },
+      });
+      await enviarMensaje(chatId, preguntaDestinoLote(items, nombres));
+      return Response.json({ ok: true, pregunta: true });
+    }
 
-    await proponerTarea(chatId, {
-      titulo: clasificacion.titulo,
-      detalle: clasificacion.detalle,
-      tipo: clasificacion.tipo,
-      duracion: clasificacion.duracion_estimada_min,
-      paralelizable: clasificacion.paralelizable,
-      proyectoId: proyecto?.id ?? null,
-      proyectoNombre: proyecto?.nombre ?? null,
-    });
+    await proponerItems(chatId, items);
 
     return Response.json({ ok: true, pregunta: true, confirmar: true });
   } catch (error) {
