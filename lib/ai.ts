@@ -1,3 +1,4 @@
+import { addDias, hoyISO, ZONA } from "./dates";
 import { interpretarDestinoRapido, normalizarTexto } from "./destino";
 import { fechaHoraLarga, madridAISO, partesMadrid } from "./recordatorios";
 import { limpiarTitulo } from "./titulo";
@@ -209,6 +210,113 @@ export interface RecordatorioInterpretado {
   recordarAt: string | null;
 }
 
+const DIAS_SEMANA = [
+  "domingo",
+  "lunes",
+  "martes",
+  "miercoles",
+  "jueves",
+  "viernes",
+  "sabado",
+];
+
+const MESES = [
+  "enero",
+  "febrero",
+  "marzo",
+  "abril",
+  "mayo",
+  "junio",
+  "julio",
+  "agosto",
+  "septiembre",
+  "octubre",
+  "noviembre",
+  "diciembre",
+];
+
+/** "Jueves, 5 de noviembre de 2026" (sin hora). */
+function fechaLargaCompleta(fecha: string): string {
+  const texto = new Intl.DateTimeFormat("es-ES", {
+    timeZone: ZONA,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(`${fecha}T12:00:00Z`));
+
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+}
+
+/** Si el webhook añade «Cuándo: …», manda esa parte para la fecha. */
+function soloCuando(texto: string): string {
+  const coincidencia = texto.match(/Cu[aá]ndo:\s*([\s\S]+)$/i);
+  return coincidencia ? coincidencia[1] : texto;
+}
+
+/**
+ * Calcula la fecha de las expresiones más comunes sin preguntar al modelo:
+ * «mañana», «pasado mañana», «ayer», «dentro de 3 días», «el lunes»…
+ */
+function fechaRelativaEnTexto(texto: string, hoy: string): string | null {
+  const t = normalizarTexto(soloCuando(texto));
+
+  const dentro = t.match(/\bdentro de (\d{1,3})\s*(dias?|semanas?)\b/);
+  if (dentro) {
+    return addDias(
+      hoy,
+      Number(dentro[1]) * (dentro[2].startsWith("semana") ? 7 : 1),
+    );
+  }
+
+  const en = t.match(/\ben (\d{1,3})\s*(dias?|semanas?)\b/);
+  if (en) {
+    return addDias(hoy, Number(en[1]) * (en[2].startsWith("semana") ? 7 : 1));
+  }
+
+  if (/\bpasado\s+manana\b/.test(t)) return addDias(hoy, 2);
+  if (/\banteayer\b/.test(t)) return addDias(hoy, -2);
+  if (/\bayer\b/.test(t)) return addDias(hoy, -1);
+  if (/\bmanana\s+por\s+la\s+manana\b/.test(t)) return addDias(hoy, 1);
+  if (/\b(?:esta|por la|de la|toda la)\s+manana\b/.test(t)) return hoy;
+  if (/\bmanana\b/.test(t)) return addDias(hoy, 1);
+  if (/\bhoy\b/.test(t)) return hoy;
+
+  if (
+    /\b(?:la\s+)?(?:semana\s+que\s+viene|proxima\s+semana|siguiente\s+semana)\b/.test(
+      t,
+    )
+  ) {
+    return addDias(hoy, 7);
+  }
+
+  const conMes = t.match(
+    /\b(\d{1,2}) de (enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)(?: de (\d{4}))?\b/,
+  );
+  if (conMes) {
+    const mes = String(MESES.indexOf(conMes[2]) + 1).padStart(2, "0");
+    const dia = conMes[1].padStart(2, "0");
+    const anio = conMes[3] ? Number(conMes[3]) : Number(hoy.slice(0, 4));
+    const fecha = `${anio}-${mes}-${dia}`;
+
+    if (!conMes[3] && fecha < hoy) return `${anio + 1}-${mes}-${dia}`;
+    return fecha;
+  }
+
+  const conDia = t.match(
+    /\b(?:el|este|proximo|la)?\s*(lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b/,
+  );
+  if (conDia) {
+    const objetivo = DIAS_SEMANA.indexOf(conDia[1]);
+    const actual = new Date(`${hoy}T12:00:00Z`).getUTCDay();
+    let delta = (objetivo - actual + 7) % 7;
+    if (delta === 0) delta = 7;
+    return addDias(hoy, delta);
+  }
+
+  return null;
+}
+
 /**
  * Convierte «recuérdame el viernes a las 18:00 llamar a Ana» en un recordatorio
  * con fecha y hora en Madrid. Si el texto no dice cuándo, `recordarAt` es null.
@@ -217,7 +325,9 @@ export async function interpretarRecordatorio(
   texto: string,
   actual?: { titulo: string; detalle: string; recordarAt: string },
 ): Promise<RecordatorioInterpretado> {
-  const ahora = fechaHoraLarga(new Date().toISOString());
+  const hoy = hoyISO();
+  const horaActual = partesMadrid(new Date().toISOString()).hora;
+  const fechaHoy = fechaLargaCompleta(hoy);
 
   let contextoActual = "";
   if (actual) {
@@ -230,13 +340,20 @@ Recordatorio actual (cambia solo lo que pida el texto):
 - cuándo: ${fecha} a las ${hora} (${fechaHoraLarga(actual.recordarAt)})`;
   }
 
-  const sistema = `Eres el asistente de recordatorios de un gestor personal. Ahora es ${ahora} en Europe/Madrid.
+  const sistema = `Eres el asistente de recordatorios de un gestor personal.
+
+HOY ES ${fechaHoy} y son las ${horaActual} en Europe/Madrid. La fecha de hoy es ${hoy}.
 
 Devuelve SOLO un JSON válido, sin markdown ni explicaciones:
 {"titulo": "asunto corto en imperativo", "detalle": "texto original pulido", "fecha": "YYYY-MM-DD o null", "hora": "HH:mm o null"}
 
-Reglas:
-- Interpreta fechas relativas («mañana», «pasado mañana», «el viernes», «en dos horas», «esta tarde») con la fecha actual de Madrid.
+Reglas de fecha:
+- Calcula siempre desde HOY (${hoy}). No cambies el año salvo que el texto lo diga: el año actual es ${hoy.slice(0, 4)}.
+- «mañana» es ${addDias(hoy, 1)}; «pasado mañana» es ${addDias(hoy, 2)}; «ayer» es ${addDias(hoy, -1)}.
+- «dentro de N días» suma N días; «la semana que viene» suma 7 días.
+- «el lunes», «el viernes»… es la próxima vez que cae ese día; si hoy ya es ese día, el de la semana siguiente.
+- Comprueba que el día de la semana coincide con la fecha: hoy ${hoy} es ${fechaLargaCompleta(hoy)}.
+- «a las dos» son las 14:00 salvo que diga «de la madrugada»; «mediodía» son las 12:00; «medianoche» son las 00:00.
 - Si no se dice hora, "hora" es null. Si no se puede deducir el día, "fecha" es null.
 - "titulo" es solo el asunto, sin la parte de cuándo ni «recuérdame».
 - "detalle" conserva el resto de información útil del texto.${contextoActual}`;
@@ -266,11 +383,15 @@ Reglas:
       ? datos.hora.trim().padStart(5, "0")
       : null;
 
+  // Para «mañana», «pasado mañana», «el lunes»… la fecha se calcula aquí:
+  // así no depende de que el modelo acierte el año o el día de la semana.
+  const fechaCalculada = fechaRelativaEnTexto(texto, hoy);
+
   let recordarAt: string | null = null;
 
-  if (fecha || hora) {
+  if (fechaCalculada || fecha || hora) {
     const base = actual ? partesMadrid(actual.recordarAt) : null;
-    const dia = fecha ?? base?.fecha ?? null;
+    const dia = fechaCalculada ?? fecha ?? base?.fecha ?? null;
     const momento = hora ?? base?.hora ?? null;
     if (dia && momento) recordarAt = madridAISO(dia, momento);
   }

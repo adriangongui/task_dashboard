@@ -68,13 +68,14 @@ export function partesMadrid(iso: string): { fecha: string; hora: string } {
   };
 }
 
-/** "Martes, 10 de noviembre a las 18:00" */
+/** "Martes, 10 de noviembre de 2026 a las 18:00" */
 export function fechaHoraLarga(iso: string): string {
   const texto = new Intl.DateTimeFormat("es-ES", {
     timeZone: ZONA,
     weekday: "long",
     day: "numeric",
     month: "long",
+    year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",
