@@ -25,6 +25,7 @@ import {
   esPeticionRecordatorio,
   fechaHoraLarga,
   guardarRecordatorio,
+  listarRecordatoriosPendientes,
   parsearBorrador,
 } from "@/lib/recordatorios";
 import {
@@ -664,11 +665,52 @@ export async function POST(request: Request) {
         "· Confirmar: te enseño lo que he entendido y espero tu «sí», «no» o un cambio.\n" +
         "· Varias tareas: «comprar pan; llamar a Ana; recoger el paquete» y te las propongo todas juntas.\n" +
         "· Recordatorios: «recuérdame el viernes a las 18:00 llamar a Ana»; te aviso por aquí a esa hora.\n" +
+        "· Ver recordatorios: «mis recordatorios» te lista los próximos avisos.\n" +
         "· Proyectos: «crea el proyecto Kerbal» y «mete en el proyecto Kerbal la tarea …».\n" +
         "· Borrar: «elimina la tarea anterior», «elimina la tarea de comprar pilas» o «elimina tareas» y te pregunto de qué columna.\n" +
         "· Si no tengo claro dónde va una tarea, te pregunto: «hoy», «mañana», «esta semana» o un proyecto.",
     );
     return Response.json({ ok: true });
+  }
+
+  // Lista de recordatorios: funciona aunque haya una propuesta abierta.
+  const comandoRapido = parsearComando(texto);
+
+  if (comandoRapido?.tipo === "listar_recordatorios") {
+    try {
+      const recordatorios = await listarRecordatoriosPendientes();
+
+      if (recordatorios.length === 0) {
+        await enviarMensaje(
+          chatId,
+          "No tienes recordatorios próximos.\nPídeme uno: «recuérdame mañana a las 9:30 llamar al banco».",
+        );
+        return Response.json({ ok: true, recordatorios: 0 });
+      }
+
+      const lineas = recordatorios.map((recordatorio, indice) => {
+        const atrasado =
+          new Date(recordatorio.recordar_at).getTime() < Date.now();
+
+        return `${indice + 1}. ${recordatorio.titulo} — ${fechaHoraLarga(recordatorio.recordar_at)}${atrasado ? " (pendiente de envío)" : ""}`;
+      });
+
+      await enviarMensaje(
+        chatId,
+        `⏰ Próximos recordatorios (${recordatorios.length})\n\n${lineas.join("\n")}\n\nSe envían por aquí a su hora.`,
+      );
+      return Response.json({
+        ok: true,
+        recordatorios: recordatorios.length,
+      });
+    } catch (error) {
+      console.error("No se pudieron listar los recordatorios", error);
+      await enviarMensaje(
+        chatId,
+        "No he podido leer los recordatorios. Inténtalo otra vez.",
+      );
+      return Response.json({ ok: true, error: "recordatorios" });
+    }
   }
 
   let pendiente: TareaPendiente | null = null;

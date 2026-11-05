@@ -139,6 +139,21 @@ export async function guardarRecordatorio(datos: {
   return id;
 }
 
+export async function listarRecordatoriosPendientes(
+  limite = 20,
+): Promise<Recordatorio[]> {
+  const { data, error } = await insforgeServer()
+    .database.from("recordatorios")
+    .select("*")
+    .eq("enviado", false)
+    .order("recordar_at", { ascending: true })
+    .limit(limite);
+
+  if (error) throw error;
+
+  return (data ?? []) as unknown as Recordatorio[];
+}
+
 export async function pendientesDeEnviar(): Promise<Recordatorio[]> {
   const { data, error } = await insforgeServer()
     .database.from("recordatorios")

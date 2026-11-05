@@ -3,7 +3,8 @@ export type Comando =
   | { tipo: "anadir_a_proyecto"; proyecto: string; tarea: string | null }
   | { tipo: "borrar_ultima" }
   | { tipo: "borrar_tarea"; texto: string }
-  | { tipo: "borrar_generico" };
+  | { tipo: "borrar_generico" }
+  | { tipo: "listar_recordatorios" };
 
 /**
  * Reconoce órdenes explícitas en el mensaje. Devuelve null cuando el texto es
@@ -13,10 +14,24 @@ export function parsearComando(texto: string): Comando | null {
   const limpio = texto
     .trim()
     .replace(/\s+/g, " ")
-    .replace(/[.!¿?¡]+$/g, "")
+    .replace(/^[.!¿?¡]+|[.!¿?¡]+$/g, "")
     .trim();
 
   if (!limpio) return null;
+
+  if (
+    /^(?:(?:mis|los|ver)\s+)?recordatorios(?:\s+(?:pendientes|pr[oó]ximos|siguientes))?$/i.test(
+      limpio,
+    ) ||
+    /^(?:qu[eé]|que)\s+recordatorios\s+(?:tengo|hay)(?:\s+pendientes)?$/i.test(
+      limpio,
+    ) ||
+    /^(?:lista|listar|muestra|mu[eé]strame|ens[eé][nñ]ame)\s+(?:mis\s+|los\s+)?recordatorios$/i.test(
+      limpio,
+    )
+  ) {
+    return { tipo: "listar_recordatorios" };
+  }
 
   const crear = limpio.match(
     /^(?:crea|crear|a[nñ]ade|agrega)\s+(?:un\s+|una\s+|el\s+)?(?:nuevo\s+|nueva\s+)?proyecto(?:\s+(?:nuevo|nueva))?(?:\s+(?:llamado|llamada|que\s+se\s+llame|de\s+nombre|con\s+nombre|titulado|titulada))?\s*:?\s*(.+)$/i,
