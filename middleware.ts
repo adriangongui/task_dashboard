@@ -34,6 +34,6 @@ export async function middleware(request: NextRequest) {
 export const config = {
   // Quedan fuera: recursos estáticos, el login, el webhook del bot y el cron.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|icon.png|apple-touch-icon|icons/|sw.js|manifest.webmanifest|robots.txt|api/login|api/telegram|api/cron|api/recordatorios).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icon.png|apple-touch-icon|icons/|sw.js|manifest.webmanifest|robots.txt|api/login|api/telegram|api/cron|api/recordatorios/enviar).*)",
   ],
 };

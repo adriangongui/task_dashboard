@@ -24,6 +24,7 @@ import TaskCard from "./TaskCard";
 import TaskDetailPanel from "./TaskDetailPanel";
 import NewTaskPanel from "./NewTaskPanel";
 import ProjectDetailPanel from "./ProjectDetailPanel";
+import RemindersPanel from "./RemindersPanel";
 
 type TabKey = "hoy" | "manana" | "semana" | "proyectos" | "sin_terminar";
 type DestinoArrastre = "hoy" | "manana" | "semana" | "sin_terminar";
@@ -116,6 +117,7 @@ export default function Dashboard() {
   const [creando, setCreando] = useState(false);
   const [hechasAbiertas, setHechasAbiertas] = useState(false);
   const [enfoque, setEnfoque] = useState(false);
+  const [recordatoriosAbiertos, setRecordatoriosAbiertos] = useState(false);
   const [foco, setFoco] = useState<Foco>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [arrastre, setArrastre] = useState<{ titulo: string; x: number; y: number } | null>(
@@ -715,6 +717,7 @@ export default function Dashboard() {
         onNuevaTarea={() => setCreando(true)}
         onVerHechas={() => setHechasAbiertas(true)}
         onEnfoque={() => setEnfoque(true)}
+        onRecordatorios={() => setRecordatoriosAbiertos(true)}
         hechasRecientes={hechasRecientes.length}
       />
 
@@ -1026,6 +1029,12 @@ export default function Dashboard() {
           presupuestoInicial={plan?.disponibles ?? null}
           onCerrar={() => setEnfoque(false)}
           onMarcarHecha={alternarHecha}
+        />
+      ) : null}
+
+      {recordatoriosAbiertos ? (
+        <RemindersPanel
+          onCerrar={() => setRecordatoriosAbiertos(false)}
         />
       ) : null}
 

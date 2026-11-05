@@ -12,6 +12,7 @@ interface Props {
   onNuevaTarea: () => void;
   onVerHechas: () => void;
   onEnfoque: () => void;
+  onRecordatorios: () => void;
   hechasRecientes: number;
 }
 
@@ -24,6 +25,7 @@ export default function AppHeader({
   onNuevaTarea,
   onVerHechas,
   onEnfoque,
+  onRecordatorios,
   hechasRecientes,
 }: Props) {
   const [tiempo, setTiempo] = useState("");
@@ -118,6 +120,27 @@ export default function AppHeader({
               <path d="M12 9v4l2.5 1.5M9 3.5h6" />
             </svg>
             Enfoque
+          </button>
+
+          <button
+            type="button"
+            onClick={onRecordatorios}
+            className="ml-2 mt-4 inline-flex items-center gap-1.5 rounded-[11px] border border-line bg-white px-3.5 py-2 text-[13px] font-medium text-muted transition hover:border-[#D5D1C7] hover:text-ink"
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              className="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M6 9.5a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6" />
+              <path d="M10 19a2.2 2.2 0 0 0 4 0" />
+            </svg>
+            Recordatorios
           </button>
         </div>
 

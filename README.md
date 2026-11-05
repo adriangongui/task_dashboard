@@ -180,6 +180,15 @@ Con el plan propuesto, **Empezar sesión** (o el botón **Enfoque** de la cabece
 - La sesión se guarda en `localStorage`, así que el cronómetro sigue corriendo aunque recargues o cierres la pestaña y vuelvas.
 - Pestañas **Cronómetro** (cuenta hacia arriba) y **Cuenta atrás** (minutos, con aviso al llegar a cero) sirven para estudiar o cronometrar cualquier cosa sin asociarla a una tarea.
 
+### Recordatorios en el panel
+
+El botón **Recordatorios** de la cabecera abre una sección con dos pestañas:
+
+- **Próximos**: los que aún no se han enviado, ordenados por fecha, con el día completo y la hora. Si la hora ya pasó y siguen pendientes, aparecen marcados como «Pendiente de envío».
+- **Enviados**: el historial de avisos que ya llegaron por Telegram.
+
+Cada recordatorio se puede borrar con la papelera y una confirmación; si se borra antes de la hora, el cron ya no lo envía. Se crean por Telegram y se guardan en `recordatorios`; el panel los lee y borra a través de `/api/recordatorios`, que exige la sesión del panel.
+
 ## Modelo de datos
 
 `proyectos`: `id` (uuid), `nombre`, `color` (hex), `created_at`.
