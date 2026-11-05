@@ -1,7 +1,8 @@
 import { clasificarTarea, interpretarDestino } from "@/lib/ai";
 import { parsearComando } from "@/lib/comandos";
+import { interpretarCorreccion, type CambioPropuesta } from "@/lib/correccion";
 import { hoyISO, mananaISO } from "@/lib/dates";
-import { interpretarDestinoRapido } from "@/lib/destino";
+import { interpretarDestinoRapido, normalizarTexto } from "@/lib/destino";
 import {
   guardarEstado,
   limpiarAccion,
@@ -32,6 +33,14 @@ interface UpdateTelegram {
     text?: string;
     chat?: { id?: number | string };
   };
+  callback_query?: {
+    id?: string;
+    data?: string;
+    message?: {
+      message_id?: number;
+      chat?: { id?: number | string };
+    };
+  };
 }
 
 const ETIQUETA_TIPO: Record<string, string> = {
@@ -47,7 +56,20 @@ function fechaParaTipo(tipo: Tipo): string | null {
   return null;
 }
 
-async function enviarMensaje(chatId: number | string, texto: string) {
+const BOTONES_CONFIRMAR = {
+  inline_keyboard: [
+    [
+      { text: "✅ Sí, crearla", callback_data: "tarea:si" },
+      { text: "❌ No, cancelar", callback_data: "tarea:no" },
+    ],
+  ],
+};
+
+async function enviarMensaje(
+  chatId: number | string,
+  texto: string,
+  opciones?: { botones?: boolean },
+) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return;
 
@@ -57,7 +79,11 @@ async function enviarMensaje(chatId: number | string, texto: string) {
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ chat_id: chatId, text: texto }),
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: texto,
+          ...(opciones?.botones ? { reply_markup: BOTONES_CONFIRMAR } : {}),
+        }),
       },
     );
 
@@ -70,6 +96,49 @@ async function enviarMensaje(chatId: number | string, texto: string) {
     }
   } catch (error) {
     console.error("No se pudo responder en Telegram", error);
+  }
+}
+
+async function responderCallback(
+  id: string | undefined,
+  texto: string,
+  alerta = false,
+) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !id) return;
+
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        callback_query_id: id,
+        text: texto,
+        show_alert: alerta,
+      }),
+    });
+  } catch (error) {
+    console.error("No se pudo responder al botón de Telegram", error);
+  }
+}
+
+/** Quita los botones del mensaje ya contestado para que no se pulsen dos veces. */
+async function quitarBotones(chatId: number | string, messageId: number) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return;
+
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/editMessageReplyMarkup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: { inline_keyboard: [] },
+      }),
+    });
+  } catch (error) {
+    console.error("No se pudieron quitar los botones", error);
   }
 }
 
@@ -100,14 +169,27 @@ interface TareaPropuesta {
 }
 
 function respuestaAfirmativa(texto: string): boolean {
-  return /^(s[ií]|vale|ok|okey|crea(?:la)?|adelante|claro|hazlo|confirmo)$/i.test(
-    texto.trim().replace(/[.!]+$/, ""),
+  if (/[👍✅👌🙌]/u.test(texto.trim())) return true;
+
+  const limpio = normalizarTexto(texto).replace(/[!¡.]/g, "").trim();
+
+  // «sí, pero cámbiale el título» no es un sí: primero se corrige.
+  if (
+    /\b(pero|aunque|mejor|cambia|cambiar|pon|ponle|espera|en vez)\b/.test(limpio)
+  ) {
+    return false;
+  }
+
+  return /^(si|sip|vale|ok|okey|okay|creala|crear|adelante|claro|hazlo|confirmo|perfecto|correcto|exacto|de acuerdo|venga|dale)(\s+(por favor|gracias|venga|dale|ya))?$/.test(
+    limpio,
   );
 }
 
 function respuestaNegativa(texto: string): boolean {
-  return /^(no|nope|cancela|cancelar|mejor no|nada|d[eé]jalo)$/i.test(
-    texto.trim().replace(/[.!]+$/, ""),
+  const limpio = normalizarTexto(texto).replace(/[!¡.]/g, "").trim();
+
+  return /^(no|nope|cancela|cancelar|mejor no|nada|dejalo|dejalo estar|olvidalo|no gracias|para nada|no la crees|no lo hagas)$/.test(
+    limpio,
   );
 }
 
@@ -140,10 +222,42 @@ function resumenPropuesta(tarea: TareaPropuesta): string {
   return lineas.join("\n");
 }
 
+/** Aplica un cambio pedido por el usuario sobre la propuesta pendiente. */
+function aplicarCorreccion(
+  propuesta: TareaPropuesta,
+  cambio: CambioPropuesta,
+  proyectos: Proyecto[],
+): TareaPropuesta {
+  let tipo = cambio.tipo ?? propuesta.tipo;
+  let proyectoId = propuesta.proyectoId;
+  let proyectoNombre = propuesta.proyectoNombre;
+
+  if (cambio.proyectoNombre !== undefined) {
+    const proyecto = cambio.proyectoNombre
+      ? buscarProyecto(cambio.proyectoNombre, proyectos)
+      : undefined;
+    proyectoId = proyecto?.id ?? null;
+    proyectoNombre = proyecto?.nombre ?? null;
+    if (proyecto) tipo = "proyecto";
+  } else if (cambio.tipo && cambio.tipo !== "proyecto") {
+    proyectoId = null;
+    proyectoNombre = null;
+  }
+
+  return {
+    ...propuesta,
+    titulo: cambio.titulo ?? propuesta.titulo,
+    tipo,
+    proyectoId,
+    proyectoNombre,
+  };
+}
+
 /** No crea nada: guarda la propuesta y espera un «sí» explícito. */
 async function proponerTarea(
   chatId: number | string,
   tarea: TareaPropuesta,
+  nota?: string,
 ): Promise<void> {
   await guardarEstado(chatId, {
     accion: "confirmar_tarea",
@@ -151,7 +265,8 @@ async function proponerTarea(
   });
   await enviarMensaje(
     chatId,
-    `¿Creo esta tarea?\n\n${resumenPropuesta(tarea)}\n\nResponde «sí» para crearla o «no» para cancelar.`,
+    `${nota ? `${nota}\n\n` : ""}¿Creo esta tarea?\n\n${resumenPropuesta(tarea)}\n\nResponde «sí» o «no», o dime qué cambio: «el título es …», «mejor mañana», «en el proyecto …».`,
+    { botones: true },
   );
 }
 
@@ -334,9 +449,45 @@ export async function POST(request: Request) {
     return Response.json({ ok: true, ignored: "json inválido" });
   }
 
-  const mensaje = update.message ?? update.edited_message;
-  const chatId = mensaje?.chat?.id;
-  const texto = mensaje?.text?.trim();
+  let chatId = update.message?.chat?.id ?? update.edited_message?.chat?.id;
+  let texto = (
+    update.message?.text ?? update.edited_message?.text
+  )?.trim();
+
+  // Botones «Sí / No» del mensaje de confirmación.
+  const callback = update.callback_query;
+  if (callback) {
+    const chatCallback = callback.message?.chat?.id;
+    const dato = callback.data ?? "";
+
+    if (!chatCallback || !/^tarea:(si|no)$/.test(dato)) {
+      await responderCallback(callback.id, "No sé qué hacer con eso.");
+      return Response.json({ ok: true, ignored: "callback desconocido" });
+    }
+
+    const estadoCallback = await obtenerEstado(chatCallback);
+    if (estadoCallback?.accion !== "confirmar_tarea") {
+      await responderCallback(
+        callback.id,
+        "Esa propuesta ya está cerrada.",
+        true,
+      );
+      return Response.json({ ok: true, ignored: "callback caducado" });
+    }
+
+    const confirmar = dato === "tarea:si";
+    await responderCallback(
+      callback.id,
+      confirmar ? "Vale, la creo." : "Vale, no la creo.",
+    );
+
+    if (callback.message?.message_id) {
+      await quitarBotones(chatCallback, callback.message.message_id);
+    }
+
+    chatId = chatCallback;
+    texto = confirmar ? "sí" : "no";
+  }
 
   if (!chatId || !texto) {
     return Response.json({ ok: true, ignored: "sin texto" });
@@ -366,40 +517,65 @@ export async function POST(request: Request) {
     // Conversaciones que dejamos abiertas en mensajes anteriores
     // ---------------------------------------------------------------
     if (accion === "confirmar_tarea") {
-      const propuesta = leerPropuesta(estado?.datos ?? {});
+      const comandoNuevo = parsearComando(texto);
 
-      if (!propuesta) {
+      if (comandoNuevo) {
+        // Otra orden mientras hay una propuesta abierta: se descarta y manda
+        // el comando (abajo se procesa como siempre).
         await limpiarAccion(chatId);
-        await enviarMensaje(
-          chatId,
-          "Se me ha perdido la tarea que iba a crear. Dímela otra vez.",
-        );
-        return Response.json({ ok: true });
-      }
+      } else {
+        const propuesta = leerPropuesta(estado?.datos ?? {});
 
-      if (respuestaNegativa(texto)) {
+        if (!propuesta) {
+          await limpiarAccion(chatId);
+          await enviarMensaje(
+            chatId,
+            "Se me ha perdido la tarea que iba a crear. Dímela otra vez.",
+          );
+          return Response.json({ ok: true });
+        }
+
+        if (respuestaNegativa(texto)) {
+          await limpiarAccion(chatId);
+          await enviarMensaje(chatId, "Vale, no la creo.");
+          return Response.json({ ok: true, cancelada: true });
+        }
+
+        if (!respuestaAfirmativa(texto)) {
+          const cambio = interpretarCorreccion(texto, propuesta, nombres);
+
+          if (cambio) {
+            await proponerTarea(
+              chatId,
+              aplicarCorreccion(propuesta, cambio, listaProyectos),
+              "✏️ He actualizado la propuesta.",
+            );
+            return Response.json({
+              ok: true,
+              pregunta: true,
+              confirmar: true,
+              actualizada: true,
+            });
+          }
+
+          await enviarMensaje(
+            chatId,
+            `No te he entendido. Responde «sí» o «no», o dime qué cambio: «el título es …», «mejor mañana» o «en el proyecto …».\n\n${resumenPropuesta(propuesta)}`,
+            { botones: true },
+          );
+          return Response.json({ ok: true, pregunta: true });
+        }
+
+        const id = await insertarTarea(propuesta);
         await limpiarAccion(chatId);
-        await enviarMensaje(chatId, "Vale, no la creo.");
-        return Response.json({ ok: true, cancelada: true });
+        await recordarUltimaTarea(chatId, id);
+
+        const donde =
+          propuesta.proyectoNombre ??
+          (ETIQUETA_TIPO[propuesta.tipo] ?? propuesta.tipo);
+        await enviarMensaje(chatId, `✅ Añadida a ${donde}: ${propuesta.titulo}`);
+        return Response.json({ ok: true, creada: true });
       }
-
-      if (!respuestaAfirmativa(texto)) {
-        await enviarMensaje(
-          chatId,
-          `No te he entendido. Responde «sí» o «no».\n\n${resumenPropuesta(propuesta)}`,
-        );
-        return Response.json({ ok: true, pregunta: true });
-      }
-
-      const id = await insertarTarea(propuesta);
-      await limpiarAccion(chatId);
-      await recordarUltimaTarea(chatId, id);
-
-      const donde =
-        propuesta.proyectoNombre ??
-        (ETIQUETA_TIPO[propuesta.tipo] ?? propuesta.tipo);
-      await enviarMensaje(chatId, `✅ Añadida a ${donde}: ${propuesta.titulo}`);
-      return Response.json({ ok: true, creada: true });
     }
 
     if (accion === "proyecto_tarea") {

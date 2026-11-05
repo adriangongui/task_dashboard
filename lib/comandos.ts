@@ -19,10 +19,13 @@ export function parsearComando(texto: string): Comando | null {
   if (!limpio) return null;
 
   const crear = limpio.match(
-    /^crea(?:r)?\s+(?:un\s+|el\s+)?proyecto(?:\s+(?:llamado|que se llame|de nombre))?\s+(.+)$/i,
+    /^(?:crea|crear|a[nñ]ade|agrega)\s+(?:un\s+|una\s+|el\s+)?(?:nuevo\s+|nueva\s+)?proyecto(?:\s+(?:nuevo|nueva))?(?:\s+(?:llamado|llamada|que\s+se\s+llame|de\s+nombre|con\s+nombre|titulado|titulada))?\s*:?\s*(.+)$/i,
   );
   if (crear) {
-    return { tipo: "crear_proyecto", nombre: crear[1].trim() };
+    const nombre = crear[1]
+      .replace(/^["'«“”]+|["'«»“”]+$/g, "")
+      .trim();
+    if (nombre) return { tipo: "crear_proyecto", nombre };
   }
 
   const anadirTareaPrimero = limpio.match(

@@ -3,7 +3,7 @@
 Sistema personal de gestión de tareas con dos caras:
 
 - **Bot de Telegram** (`/api/telegram/webhook`): mandas una nota de texto (o una transcripción de voz) y Groq la convierte en una propuesta de tarea (título corto, tipo, duración estimada, si es paralelizable y proyecto) que confirmas con «sí» antes de que se guarde.
-- **Panel web** (Next.js 14 App Router + InsForge): columnas Hoy / Mañana / Esta semana / Proyectos futuros / Sin terminar, arrastre de tareas entre columnas, historial de las hechas en los últimos 3 días, progreso por proyecto, detalle en panel lateral, plan del día según el tiempo que tengas y alta manual de tareas eligiendo destino.
+- **Panel web** (Next.js 14 App Router + InsForge): columnas Hoy / Mañana / Esta semana / Proyectos futuros / Sin terminar, arrastre de tareas entre columnas, historial de las hechas en los últimos 3 días, progreso por proyecto, detalle en panel lateral, plan del día según el tiempo que tengas y alta manual de tareas eligiendo destino. El panel pide una contraseña antes de mostrar nada.
 
 ```
 Telegram  →  /api/telegram/webhook  →  Groq (clasifica)  →  InsForge (Postgres)
@@ -38,7 +38,7 @@ npx @insforge/cli secrets get ANON_KEY   # pública, va al navegador
 npx @insforge/cli secrets get API_KEY    # admin (ik_...), solo servidor
 ```
 
-El esquema crea los tipos `tipo_tarea` y `estado_tarea`, las tablas `proyectos` y `tareas`, índices, `GRANT` para `anon` y RLS permisiva. **No hay login**: quien tenga la URL y la anon key puede leer y escribir. Es válido para un dashboard personal; no lo uses con datos sensibles ni compartas las claves.
+El esquema crea los tipos `tipo_tarea` y `estado_tarea`, las tablas `proyectos` y `tareas`, índices, `GRANT` para `anon` y RLS permisiva. **No hay cuentas de usuario**: el panel pide una contraseña única (`APP_PASSWORD`) antes de mostrar nada, pero la anon key viaja al navegador y la RLS es permisiva, así que la contraseña protege la interfaz y no la base de datos. Es válido para un dashboard personal; no lo uses con datos sensibles ni compartas las claves.
 
 ## 2. Variables de entorno
 
@@ -53,6 +53,9 @@ Copia `.env.example` a `.env.local` (ya existe uno con la URL y la API_KEY de es
 | `GROQ_MODEL` | opcional, por defecto `openai/gpt-oss-120b` |
 | `TELEGRAM_BOT_TOKEN` | responder en el chat |
 | `TELEGRAM_WEBHOOK_SECRET` | opcional, valida `X-Telegram-Bot-Api-Secret-Token` |
+| `APP_PASSWORD` | contraseña del panel (opcional, si falta se usa la de siempre) |
+| `APP_PASSWORD_HASH` | alternativa a `APP_PASSWORD`: sha256 en hexadecimal |
+| `APP_SESSION_SECRET` | opcional, firma la cookie de sesión |
 
 `INSFORGE_API_KEY` es una clave de admin: no la prefijes con `NEXT_PUBLIC_` ni la subas al repo.
 
@@ -64,6 +67,8 @@ npm run dev
 ```
 
 Abre la URL que imprime Next.js (normalmente `http://localhost:3000`).
+
+La primera pantalla pide la contraseña del panel. Se cambia con `APP_PASSWORD` en Vercel o en `.env.local`; si no defines ninguna, se usa la de siempre. Sin la cookie de sesión, `/` redirige a `/login` y las rutas de API responden 401. Quedan fuera el webhook del bot y el cron, que ya tienen su propio secreto.
 
 ### Instalar en el móvil
 
@@ -108,8 +113,9 @@ Respuesta esperada: `¿Creo esta tarea?` con el título, la columna y la duraci�
 Detalles del webhook:
 
 - Devuelve `200` siempre que el update esté bien formado, para que Telegram no reintente en bucle; si Groq o InsForge fallan, el error se cuenta en el chat y la tarea no se da por guardada.
-- **Nada se crea sin confirmar**: en cuanto la tarea tiene título y destino, el bot responde «¿Creo esta tarea?» con el título, dónde iría y la duración. Solo se guarda si contestas «sí» (también valen «vale», «ok», «adelante»); «no» la descarta. Cualquier otra respuesta te vuelve a preguntar. La propuesta vive en `estados_chat` con `accion = confirmar_tarea`, así que sobrevive a reinicios.
-- Los proyectos **solo se crean si lo pides**: «crea el proyecto Kerbal». Si el clasificador sugiere un proyecto que no existe, la tarea se guarda sin proyecto.
+- **Nada se crea sin confirmar**: en cuanto la tarea tiene título y destino, el bot responde «¿Creo esta tarea?» con el título, dónde iría, la duración y dos botones, **✅ Sí, crearla** y **❌ No, cancelar** (los pulsas y se envían solos). También valen por texto «sí», «vale», «ok», «adelante»; «no» la descarta. La propuesta vive en `estados_chat` con `accion = confirmar_tarea`, así que sobrevive a reinicios.
+- **Corregir antes de crear**: en vez de «sí» o «no» puedes decir el cambio: «la tarea es up convives», «sería que el título es …», «mejor mañana», «en el proyecto Kerbal». El bot reescribe la propuesta y vuelve a pedir confirmación, sin crear nada. Si le mandas otra orden («crea el proyecto X»), descarta la propuesta y ejecuta la orden.
+- Los proyectos **solo se crean si lo pides**: «crea el proyecto Kerbal» o «crea un nuevo proyecto titulado Kerbal». Si el clasificador sugiere un proyecto que no existe, la tarea se guarda sin proyecto.
 - Para meter una tarea en un proyecto: «mete en el proyecto Kerbal la tarea jugar al roblox». Si no dices la tarea, el bot pregunta «¿Qué tarea meto en Kerbal?» y usa tu siguiente mensaje.
 - Borrar por chat: «elimina la tarea anterior» (la última que creó el bot), «elimina la tarea de comprar pan» (por título) o «elimina tareas» → pregunta «hoy», «mañana» o «esta semana», lista esa columna numerada y borra la que elijas por número o título. El estado de cada conversación vive en la tabla `estados_chat`.
 - Las tareas de tipo `hoy` se guardan con `fecha_para` = hoy (zona `Europe/Madrid`).
@@ -173,7 +179,10 @@ app/
   api/telegram/webhook/route.ts   # recibe, clasifica, guarda y responde
   api/plan-dia/route.ts           # subconjunto sugerido de tareas de hoy
   api/cron/cerrar-dia/route.ts    # pasa las de hoy no hechas a sin_terminar
+  api/login/route.ts              # comprueba la contraseña y pone la cookie
+  login/page.tsx                  # pantalla de contraseña
   layout.tsx / page.tsx / globals.css / manifest.ts   # metadatos y PWA
+middleware.ts                     # sin sesión, todo va a /login
 public/
   sw.js                           # service worker (shell offline)
   offline.html                    # aviso sin conexión
@@ -188,6 +197,8 @@ components/
   ProjectsColumn.tsx              # barras de progreso y proyectos expandibles
 lib/
   ai.ts                           # llamada a Groq + prompt JSON
+  acceso.ts                       # contraseña del panel y cookie de sesión
+  correccion.ts                   # cambios sobre la tarea antes de confirmarla
   plan.ts                         # algoritmo del plan del día
   dates.ts                        # zona horaria, saludo, racha
   duration.ts                     # parseo/formato de tiempos
