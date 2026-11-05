@@ -140,6 +140,21 @@ export default function Dashboard() {
     });
   }, []);
 
+  // Al tocar una notificación push se abre el panel de recordatorios.
+  useEffect(() => {
+    const parametros = new URLSearchParams(window.location.search);
+    if (parametros.get("recordatorios") !== "1") return;
+
+    setRecordatoriosAbiertos(true);
+    parametros.delete("recordatorios");
+    const resto = parametros.toString();
+    window.history.replaceState(
+      {},
+      "",
+      window.location.pathname + (resto ? `?${resto}` : ""),
+    );
+  }, []);
+
   useEffect(() => {
     if (!aviso) return;
     const id = setTimeout(() => setAviso(null), 3800);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import PushNotificaciones from "./PushNotificaciones";
 
 interface RecordatorioPanel {
   id: string;
@@ -219,8 +220,8 @@ export default function RemindersPanel({ onCerrar }: { onCerrar: () => void }) {
               </p>
               <p className="mt-1.5 text-[12px] leading-relaxed text-muted">
                 {pestana === "proximos"
-                  ? "Pídelos por Telegram: «recuérdame mañana a las 9:30 llamar al banco»."
-                  : "Cuando llegue la hora, el aviso se envía por Telegram y aparece aquí."}
+                  ? "Pídelos por Telegram: «recuérdame mañana a las 9:30 llamar al banco». Activa los avisos del móvil aquí abajo."
+                  : "Cuando llegue la hora, el aviso se envía por Telegram y al móvil, y aparece aquí."}
               </p>
             </div>
           ) : (
@@ -316,9 +317,12 @@ export default function RemindersPanel({ onCerrar }: { onCerrar: () => void }) {
             </div>
           )}
 
-          <p className="mt-4 border-t border-line pt-3 text-[11.5px] leading-relaxed text-muted">
-            Los recordatorios se crean por Telegram y llegan al chat a la hora
-            indicada. Aquí puedes revisarlos y borrarlos antes o después.
+          <PushNotificaciones />
+
+          <p className="mt-3 border-t border-line pt-3 text-[11.5px] leading-relaxed text-muted">
+            Los recordatorios se crean por Telegram y llegan a la hora indicada
+            al chat y, si activas los avisos, al móvil como notificación. Aquí
+            puedes revisarlos y borrarlos antes o después.
           </p>
         </div>
       </div>

@@ -1,5 +1,5 @@
-/* Service worker del panel: shell offline + estáticos con caché. */
-const VERSION = "task-dashboard-v3";
+/* Service worker del panel: shell offline, estáticos con caché y avisos push. */
+const VERSION = "task-dashboard-v4";
 const SHELL = [
   "/",
   "/offline.html",
@@ -46,7 +46,11 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(peticion.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith("/api/")) return;
+
+  // El push se sirve siempre desde la red: nunca una versión cacheada.
+  if (url.pathname.startsWith("/api/") || url.pathname === "/service-worker.js") {
+    return;
+  }
 
   // Navegación: red primero, con la última copia (o el aviso offline) si falla.
   if (peticion.mode === "navigate") {
@@ -88,4 +92,64 @@ self.addEventListener("fetch", (event) => {
       })(),
     );
   }
+});
+
+/* Avisos push: recordatorios con vibración en Android. */
+self.addEventListener("push", (event) => {
+  let datos = {};
+
+  try {
+    datos = event.data ? event.data.json() : {};
+  } catch {
+    datos = { body: event.data ? event.data.text() : "" };
+  }
+
+  const titulo = datos.title || "Recordatorio";
+  const opciones = {
+    body: datos.body || "Es la hora de tu recordatorio.",
+    icon: "/icons/icon-192-v3.png",
+    badge: "/icons/icon-192-v3.png",
+    tag: datos.tag || "recordatorio",
+    renotify: true,
+    requireInteraction: true,
+    vibrate: [200, 100, 200, 100, 300],
+    data: { url: datos.url || "/" },
+    actions: [{ action: "abrir", title: "Abrir" }],
+  };
+
+  event.waitUntil(self.registration.showNotification(titulo, opciones));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  const destino = new URL(
+    (event.notification.data && event.notification.data.url) || "/",
+    self.location.origin,
+  ).href;
+
+  event.waitUntil(
+    (async () => {
+      const clientes = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+
+      for (const cliente of clientes) {
+        if (cliente.url.startsWith(self.location.origin)) {
+          await cliente.focus();
+          if ("navigate" in cliente) {
+            try {
+              await cliente.navigate(destino);
+            } catch {
+              // Si no se puede navegar, al menos queda enfocada.
+            }
+          }
+          return;
+        }
+      }
+
+      await self.clients.openWindow(destino);
+    })(),
+  );
 });

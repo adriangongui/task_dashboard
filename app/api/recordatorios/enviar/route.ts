@@ -1,3 +1,4 @@
+import { enviarPushRecordatorio } from "@/lib/push";
 import {
   marcarEnviado,
   pendientesDeEnviar,
@@ -38,7 +39,7 @@ async function enviar(chatId: string, texto: string): Promise<boolean> {
 
 /**
  * Lo llama un schedule de InsForge cada minuto. Manda los recordatorios que
- * ya han vencido y los marca para no repetirlos.
+ * ya han vencido por Telegram y por push, y los marca para no repetirlos.
  */
 async function procesar(request: Request) {
   try {
@@ -54,21 +55,25 @@ async function procesar(request: Request) {
 
     const pendientes = await pendientesDeEnviar();
     let enviados = 0;
+    let push = 0;
 
     for (const recordatorio of pendientes) {
-      if (!recordatorio.chat_id) {
-        await marcarEnviado(recordatorio.id);
-        continue;
-      }
-
       const texto =
         recordatorio.detalle &&
         recordatorio.detalle.trim() !== recordatorio.titulo.trim()
           ? `⏰ Recuerda: ${recordatorio.titulo}\n\n${recordatorio.detalle}`
           : `⏰ Recuerda: ${recordatorio.titulo}`;
 
-      const ok = await enviar(recordatorio.chat_id, texto);
-      if (ok) {
+      const telegramOk = recordatorio.chat_id
+        ? await enviar(recordatorio.chat_id, texto)
+        : false;
+
+      const pushOk = await enviarPushRecordatorio(recordatorio);
+      push += pushOk;
+
+      // Se da por enviado si llegó por alguno de los dos canales. Sin chat
+      // asignado se comporta como antes: no se reintenta para siempre.
+      if (telegramOk || pushOk > 0 || !recordatorio.chat_id) {
         await marcarEnviado(recordatorio.id);
         enviados += 1;
       }
@@ -78,6 +83,7 @@ async function procesar(request: Request) {
       ok: true,
       pendientes: pendientes.length,
       enviados,
+      push,
     });
   } catch (error) {
     const mensaje = error instanceof Error ? error.message : "error desconocido";

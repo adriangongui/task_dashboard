@@ -56,6 +56,8 @@ Copia `.env.example` a `.env.local` (ya existe uno con la URL y la API_KEY de es
 | `APP_PASSWORD` | contraseña del panel (opcional, si falta se usa la de siempre) |
 | `APP_PASSWORD_HASH` | alternativa a `APP_PASSWORD`: sha256 en hexadecimal |
 | `APP_SESSION_SECRET` | opcional, firma la cookie de sesión |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | opcionales, firman los avisos push; si faltan se generan y guardan en `ajustes` |
+| `VAPID_SUBJECT` | opcional, contacto para el servicio push (`mailto:...`) |
 
 `INSFORGE_API_KEY` es una clave de admin: no la prefijes con `NEXT_PUBLIC_` ni la subas al repo.
 
@@ -119,7 +121,7 @@ Detalles del webhook:
 - **Varias tareas a la vez**: si la propuesta tiene varias, los tiempos se cambian por tarea: «mates 30 min y dibujo técnico 1h 20», «la primera 20 minutos y la segunda 40», «todas 30 minutos», y el destino común («todo para mañana»). También se pueden meter varias tareas en un proyecto: «mete en el proyecto X estas tareas: a; b».
 - Si le mandas otra orden («crea el proyecto X»), descarta la propuesta y ejecuta la orden.
 - **Varias tareas en un mensaje**: si la nota enumera cosas («comprar pan; llamar a Ana; recoger el paquete»), el clasificador devuelve una lista y el bot propone todas juntas antes de crearlas. Si alguna no dice cuándo va, pregunta una vez por todas.
-- **Recordatorios con hora**: «recuérdame el viernes a las 18:00 llamar a Ana». El bot propone el asunto y la fecha, y a esa hora te manda un mensaje al chat. Si no dices cuándo, te lo pregunta. El botón **✏️ Editar** copia al portapapeles un borrador (`recuérdame el 14/11/2026 a las 18:00: Llamar a Ana`): lo pegas en el campo de texto, cambias lo que quieras y lo mandas.
+- **Recordatorios con hora**: «recuérdame el viernes a las 18:00 llamar a Ana». También entiende «créame una alarma mañana a las 8», «créame un recordatorio», «ponme un aviso», «hazme un recordatorio», «agéndame una alarma», «prográmame un aviso», «mándame un recordatorio», «quiero un recordatorio», «¿me pones una alarma?», «avísame el lunes a las 9», «no me olvides de llamar a mamá mañana» o simplemente «alarma mañana a las 6:45». El bot propone el asunto y la fecha, y a esa hora te manda un mensaje al chat. Si no dices cuándo, te lo pregunta. El botón **✏️ Editar** copia al portapapeles un borrador (`recuérdame el 14/11/2026 a las 18:00: Llamar a Ana`): lo pegas en el campo de texto, cambias lo que quieras y lo mandas.
 - **Consultar recordatorios**: «mis recordatorios» (o «recordatorios», «qué recordatorios tengo») devuelve la lista de los próximos avisos con el día completo y la hora; los que ya vencieron y siguen pendientes aparecen marcados como «pendiente de envío». También se pueden ver y borrar en la sección **Recordatorios** del panel.
 - **Fechas relativas**: el bot conoce siempre el día de la semana, la fecha, el año y la hora en Madrid, y calcula él mismo «hoy», «mañana», «pasado mañana», «ayer», «anteayer», «dentro de N días», «la semana que viene», «el lunes» o «el 10 de noviembre». La confirmación muestra el día completo, por ejemplo «Viernes, 6 de noviembre de 2026 a las 14:00»; «a las dos» se toma como las 14:00 salvo que digas «de la madrugada».
 - Los proyectos **solo se crean si lo pides**: «crea el proyecto Kerbal» o «crea un nuevo proyecto titulado Kerbal». Si el clasificador sugiere un proyecto que no existe, la tarea se guarda sin proyecto.
@@ -190,6 +192,17 @@ El botón **Recordatorios** de la cabecera abre una sección con dos pestañas:
 
 Cada recordatorio se puede borrar con la papelera y una confirmación; si se borra antes de la hora, el cron ya no lo envía. Se crean por Telegram y se guardan en `recordatorios`; el panel los lee y borra a través de `/api/recordatorios`, que exige la sesión del panel.
 
+### Avisos en el móvil (notificaciones push)
+
+Dentro de **Recordatorios** hay una tarjeta **Avisos en el móvil**. Al pulsar **Activar** el navegador pide permiso, suscribe el dispositivo y lo guarda en `ajustes` (clave `push_suscripciones`); desde ese momento cada recordatorio llega como notificación del sistema, aunque la app esté cerrada, y al tocarla se abre el panel de recordatorios.
+
+- **Android**: funciona en Chrome/Edge, instalada o no. La notificación usa `vibrate: [200, 100, 200, 100, 300]` (dos pulsos cortos y uno largo); si el móvil está en silencio o con vibración desactivada, no vibrará.
+- **iPhone/iPad**: hace falta iOS 16.4 o superior y abrir la app **desde el icono de la pantalla de inicio**; en Safari normal no aparece la opción. iOS no permite elegir el patrón de vibración: usa el aviso del sistema.
+- **Probar** manda una notificación de prueba al instante; **Desactivar** borra la suscripción de este dispositivo.
+- Si el navegador tiene las notificaciones bloqueadas, hay que permitirlas en los ajustes del sitio; la tarjeta lo indica.
+
+El envío lo hace el mismo schedule que ya manda los avisos por Telegram (`/api/recordatorios/enviar`): manda push a todos los dispositivos suscritos y Telegram al chat, y marca el recordatorio como enviado si llegó por cualquiera de los dos. Las suscripciones que el servicio push rechaza con 404/410 se borran solas. Las claves VAPID se leen de `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`; si no existen, se generan una vez y se guardan en `ajustes`, así que no hace falta configurar nada en Vercel.
+
 ## Modelo de datos
 
 `proyectos`: `id` (uuid), `nombre`, `color` (hex), `created_at`.
@@ -198,9 +211,9 @@ Cada recordatorio se puede borrar con la papelera y una confirmación; si se bor
 
 `tareas_pendientes`: `id`, `chat_id` (único), `texto`, `titulo`, `detalle`, `duracion_estimada_min`, `paralelizable`, `created_at`. Solo la usa el servidor; no tiene acceso para `anon`.
 
-`recordatorios`: `id`, `titulo`, `detalle`, `recordar_at` (timestamptz), `enviado`, `chat_id`, `created_at`. Un schedule de InsForge llama cada minuto a `/api/recordatorios/enviar` (cabecera `x-recordatorios-token`, token guardado en `ajustes`); los que ya vencieron se mandan por Telegram y se marcan con `enviado = true`.
+`recordatorios`: `id`, `titulo`, `detalle`, `recordar_at` (timestamptz), `enviado`, `chat_id`, `created_at`. Un schedule de InsForge llama cada minuto a `/api/recordatorios/enviar` (cabecera `x-recordatorios-token`, token guardado en `ajustes`); los que ya vencieron se mandan por Telegram y por push, y se marcan con `enviado = true`.
 
-`ajustes`: pares `clave`/`valor` del servidor (por ejemplo el token del cron de recordatorios). Sin acceso para `anon`.
+`ajustes`: pares `clave`/`valor` del servidor (token del cron de recordatorios, suscripciones push y claves VAPID). Sin acceso para `anon`.
 
 ## Estructura
 
@@ -209,13 +222,16 @@ app/
   api/telegram/webhook/route.ts   # recibe, clasifica, guarda y responde
   api/plan-dia/route.ts           # subconjunto sugerido de tareas de hoy
   api/cron/cerrar-dia/route.ts    # pasa las de hoy no hechas a sin_terminar
-  api/recordatorios/enviar/route.ts # manda los recordatorios vencidos por Telegram
+  api/recordatorios/enviar/route.ts # manda los recordatorios vencidos por Telegram y push
+  api/push/clave/route.ts         # clave pública VAPID para suscribirse
+  api/push/suscribir/route.ts     # alta/baja de dispositivos
+  api/push/probar/route.ts        # notificación de prueba
   api/login/route.ts              # comprueba la contraseña y pone la cookie
   login/page.tsx                  # pantalla de contraseña
   layout.tsx / page.tsx / globals.css / manifest.ts   # metadatos y PWA
 middleware.ts                     # sin sesión, todo va a /login
 public/
-  sw.js                           # service worker (shell offline)
+  service-worker.js               # service worker (shell offline + avisos push)
   offline.html                    # aviso sin conexión
   icons/ y apple-touch-icon-v3.png # iconos generados desde el diseño
 components/
@@ -237,6 +253,7 @@ lib/
   insforge/server.ts              # cliente de servidor (admin API key)
   pending.ts                      # notas esperando que el usuario diga el destino
   recordatorios.ts                # fechas en Madrid, borradores y envío de avisos
+  push.ts                         # suscripciones push, claves VAPID y envío
 insforge/schema.sql
 insforge/migrations/              # cambios aplicados sobre una base existente
 scripts/generar-iconos.ps1       # regenera los iconos PNG desde public/icons/app-icon.png
