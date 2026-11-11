@@ -176,7 +176,9 @@ function normalizar(datos: unknown, textoOriginal: string): Clasificacion {
   const hoy = hoyISO();
   const manana = mananaISO();
 
-  if (fecha && tipo !== "proyecto") {
+  // Una fecha futura clara manda sobre la suposición del modelo: si cae más
+  // allá de mañana debe ir a Programadas para que se creen sus dos avisos.
+  if (fecha && (tipo !== "proyecto" || fecha > manana)) {
     if (fecha <= hoy) tipo = "hoy";
     else if (fecha === manana) tipo = "manana";
     else tipo = "programada";
