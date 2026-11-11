@@ -13,6 +13,7 @@ interface Props {
   onVerHechas: () => void;
   onEnfoque: () => void;
   onRecordatorios: () => void;
+  onCalendario: () => void;
   hechasRecientes: number;
 }
 
@@ -26,6 +27,7 @@ export default function AppHeader({
   onVerHechas,
   onEnfoque,
   onRecordatorios,
+  onCalendario,
   hechasRecientes,
 }: Props) {
   const [tiempo, setTiempo] = useState("");
@@ -141,6 +143,27 @@ export default function AppHeader({
               <path d="M10 19a2.2 2.2 0 0 0 4 0" />
             </svg>
             Recordatorios
+          </button>
+
+          <button
+            type="button"
+            onClick={onCalendario}
+            className="ml-2 mt-4 inline-flex items-center gap-1.5 rounded-[11px] border border-line bg-white px-3.5 py-2 text-[13px] font-medium text-muted transition hover:border-[#D5D1C7] hover:text-ink"
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 24 24"
+              className="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
+              <path d="M8 3v4M16 3v4M3.5 9.5h17" />
+            </svg>
+            Calendario
           </button>
         </div>
 

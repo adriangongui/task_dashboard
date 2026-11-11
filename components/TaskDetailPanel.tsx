@@ -25,6 +25,7 @@ const ETIQUETA_TIPO: Record<Tarea["tipo"], string> = {
   hoy: "Hoy",
   manana: "Mañana",
   semana: "Esta semana",
+  programada: "Programada",
   proyecto: "Proyecto",
 };
 
@@ -32,6 +33,7 @@ const COLOR_TIPO: Record<Tarea["tipo"], string> = {
   hoy: "#5B5DD6",
   manana: "#C08A2E",
   semana: "#22A06B",
+  programada: "#4B93C9",
   proyecto: "#D97757",
 };
 

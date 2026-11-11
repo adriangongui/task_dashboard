@@ -1,6 +1,7 @@
 import {
   clasificarTareas,
   interpretarDestino,
+  interpretarEvento,
   interpretarRecordatorio,
 } from "@/lib/ai";
 import { parsearComando } from "@/lib/comandos";
@@ -13,6 +14,20 @@ import {
 import { hoyISO, mananaISO } from "@/lib/dates";
 import { interpretarDestinoRapido, normalizarTexto } from "@/lib/destino";
 import {
+  CATEGORIAS_EVENTO,
+  pareceEventoCalendario,
+  type CategoriaEvento,
+} from "@/lib/eventos";
+import { guardarEvento, listarEventos } from "@/lib/eventosServer";
+import {
+  fechaCorta,
+  fechaDeTexto,
+  fechaLargaDia,
+  horaDeTexto,
+  rangoFechas,
+  type RangoFechas,
+} from "@/lib/fechas";
+import {
   guardarEstado,
   limpiarAccion,
   obtenerEstado,
@@ -21,12 +36,18 @@ import {
 import { insforgeServer } from "@/lib/insforge/server";
 import { colorParaNombre } from "@/lib/palette";
 import {
+  actualizarRecordatorio,
   borradorRecordatorio,
+  borrarRecordatorio,
+  crearRecordatoriosTarea,
   esPeticionRecordatorio,
   fechaHoraLarga,
   guardarRecordatorio,
+  listarRecordatoriosEntre,
   listarRecordatoriosPendientes,
+  obtenerRecordatorio,
   parsearBorrador,
+  type Recordatorio,
 } from "@/lib/recordatorios";
 import {
   borrarPendiente,
@@ -65,6 +86,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
   manana: "Mañana",
   semana: "Esta semana",
   proyecto: "Proyectos futuros",
+  programada: "Programada",
 };
 
 function fechaParaTipo(tipo: Tipo): string | null {
@@ -72,6 +94,16 @@ function fechaParaTipo(tipo: Tipo): string | null {
   if (tipo === "manana") return mananaISO();
   return null;
 }
+
+const ETIQUETA_RANGO: Record<RangoFechas, string> = {
+  hoy: "hoy",
+  manana: "mañana",
+  semana: "esta semana",
+  semana_que_viene: "la semana que viene",
+  mes: "este mes",
+  mes_que_viene: "el mes que viene",
+  todo: "los próximos",
+};
 
 type Teclado = { inline_keyboard: Array<Array<Record<string, unknown>>> };
 
@@ -184,13 +216,20 @@ function preguntaDestino(titulo: string, proyectos: string[]): string {
   return `🤔 No sé dónde poner «${titulo}».\n¿Hoy, mañana, esta semana o en un proyecto?${extra}\nSi no la quieres, dime «cancela».`;
 }
 
-const TIPOS_VALIDOS: Tipo[] = ["hoy", "manana", "semana", "proyecto"];
+const TIPOS_VALIDOS: Tipo[] = [
+  "hoy",
+  "manana",
+  "semana",
+  "proyecto",
+  "programada",
+];
 
 interface TareaPropuesta {
   clase: "tarea";
   titulo: string;
   detalle: string;
   tipo: Tipo;
+  fecha: string | null;
   duracion: number | null;
   paralelizable: boolean;
   proyectoId: string | null;
@@ -199,17 +238,33 @@ interface TareaPropuesta {
 
 interface RecordatorioPropuesto {
   clase: "recordatorio";
+  /** Si existe, la propuesta edita ese recordatorio en vez de crear otro. */
+  id?: string;
   titulo: string;
   detalle: string;
   recordarAt: string;
 }
 
-type ItemPropuesta = TareaPropuesta | RecordatorioPropuesto;
+interface EventoPropuesto {
+  clase: "evento";
+  titulo: string;
+  detalle: string;
+  categoria: CategoriaEvento;
+  fecha: string;
+  hora: string | null;
+}
+
+type ItemPropuesta = TareaPropuesta | RecordatorioPropuesto | EventoPropuesto;
 
 function respuestaAfirmativa(texto: string): boolean {
   if (/[👍✅👌🙌]/u.test(texto.trim())) return true;
 
-  const limpio = normalizarTexto(texto).replace(/[!¡.]/g, "").trim();
+  const limpio = normalizarTexto(texto)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[!¡.]/g, "")
+    .trim();
 
   // «sí, pero cámbiale el título» no es un sí: primero se corrige.
   if (
@@ -224,7 +279,12 @@ function respuestaAfirmativa(texto: string): boolean {
 }
 
 function respuestaNegativa(texto: string): boolean {
-  const limpio = normalizarTexto(texto).replace(/[!¡.]/g, "").trim();
+  const limpio = normalizarTexto(texto)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[!¡.]/g, "")
+    .trim();
 
   return /^(no|nope|cancela|cancelar|mejor no|nada|dejalo|dejalo estar|olvidalo|no gracias|para nada|no la crees|no lo hagas)$/.test(
     limpio,
@@ -244,6 +304,10 @@ function leerTareaPropuesta(
     titulo,
     detalle: typeof datos.detalle === "string" ? datos.detalle : "",
     tipo,
+    fecha:
+      typeof datos.fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(datos.fecha)
+        ? datos.fecha
+        : null,
     duracion: typeof datos.duracion === "number" ? datos.duracion : null,
     paralelizable: datos.paralelizable === true,
     proyectoId:
@@ -267,9 +331,36 @@ function leerItem(valor: unknown): ItemPropuesta | null {
 
     return {
       clase: "recordatorio",
+      ...(typeof datos.id === "string" ? { id: datos.id } : {}),
       titulo,
       detalle: typeof datos.detalle === "string" ? datos.detalle : "",
       recordarAt: fecha.toISOString(),
+    };
+  }
+
+  if (datos.clase === "evento") {
+    const titulo = typeof datos.titulo === "string" ? datos.titulo : "";
+    const fecha = typeof datos.fecha === "string" ? datos.fecha : "";
+    const categoria = datos.categoria as CategoriaEvento;
+
+    if (
+      !titulo ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(fecha) ||
+      !(categoria in CATEGORIAS_EVENTO)
+    ) {
+      return null;
+    }
+
+    return {
+      clase: "evento",
+      titulo,
+      detalle: typeof datos.detalle === "string" ? datos.detalle : "",
+      categoria,
+      fecha,
+      hora:
+        typeof datos.hora === "string" && /^\d{2}:\d{2}$/.test(datos.hora)
+          ? datos.hora
+          : null,
     };
   }
 
@@ -290,11 +381,19 @@ function leerItems(datos: Record<string, unknown>): ItemPropuesta[] {
 
 function resumenItem(item: ItemPropuesta): string {
   if (item.clase === "recordatorio") {
-    return `• ⏰ ${item.titulo} — ${fechaHoraLarga(item.recordarAt)}`;
+    return `• ${item.id ? "✏️ " : "⏰ "}${item.titulo} — ${fechaHoraLarga(item.recordarAt)}`;
+  }
+
+  if (item.clase === "evento") {
+    const categoria = CATEGORIAS_EVENTO[item.categoria].etiqueta;
+    return `• 📅 ${item.titulo} — ${fechaLargaDia(item.fecha)}${item.hora ? ` a las ${item.hora}` : ""} · ${categoria}`;
   }
 
   const donde = item.proyectoNombre ?? ETIQUETA_TIPO[item.tipo] ?? item.tipo;
   const extras = [donde];
+  if (item.tipo === "programada" && item.fecha) {
+    extras.push(`${fechaCorta(item.fecha)} (aviso el día antes y ese día a las 9:00)`);
+  }
   if (item.duracion) extras.push(`${item.duracion} min`);
   if (item.paralelizable) extras.push("paralelizable");
 
@@ -323,15 +422,18 @@ function borradorTarea(item: TareaPropuesta): string {
   const cuando =
     item.tipo === "proyecto"
       ? "proyecto"
-      : item.tipo === "semana"
-        ? "esta semana"
-        : item.tipo === "manana"
-          ? "mañana"
-          : "hoy";
+      : item.tipo === "programada"
+        ? "programada"
+        : item.tipo === "semana"
+          ? "esta semana"
+          : item.tipo === "manana"
+            ? "mañana"
+            : "hoy";
 
   return [
     `Título: ${item.titulo}`,
     `Cuándo: ${cuando}`,
+    `Fecha: ${item.fecha ?? "sin fecha"}`,
     `Duración: ${item.duracion ? `${item.duracion} min` : "sin duración"}`,
     `Proyecto: ${item.proyectoNombre ?? "sin proyecto"}`,
   ].join(" | ");
@@ -376,6 +478,8 @@ function aplicarCorreccion(
     ...propuesta,
     titulo: cambio.titulo ?? propuesta.titulo,
     tipo,
+    fecha:
+      cambio.fecha !== undefined ? cambio.fecha : propuesta.fecha,
     proyectoId,
     proyectoNombre,
     duracion:
@@ -399,10 +503,14 @@ async function proponerItems(
     items.length === 1 ? "¿Creo esto?" : `¿Creo estas ${items.length} cosas?`;
   const ayuda =
     unico?.clase === "recordatorio"
-      ? "Responde «sí» o «no», o pulsa «Editar» para copiar el recordatorio y cambiar lo que quieras."
-      : unico
-        ? "Responde «sí» o «no», pulsa ✏️ Editar para copiar la plantilla y retocarla, o dime el cambio: «el título es …», «mejor mañana», «en el proyecto …», «cambia la duración a 45 min»."
-        : "Responde «sí» o «no», o pulsa ✏️ Editar para copiar una plantilla con título, cuándo, duración y proyecto y retocarla. También valen «mates 30 min y dibujo 1h 20», «la primera 20 y la segunda 40» o «todas 30 minutos». «cancela» para dejarlo.";
+      ? unico.id
+        ? "Responde «sí» para guardar el cambio o «no» para dejarlo como estaba."
+        : "Responde «sí» o «no», o pulsa «Editar» para copiar el recordatorio y cambiar lo que quieras."
+      : unico?.clase === "evento"
+        ? "Responde «sí» para añadirlo al calendario o «no» para descartarlo."
+        : unico
+          ? "Responde «sí» o «no», pulsa ✏️ Editar para copiar la plantilla y retocarla, o dime el cambio: «el título es …», «mejor mañana», «en el proyecto …», «cambia la duración a 45 min»."
+          : "Responde «sí» o «no», o pulsa ✏️ Editar para copiar una plantilla con título, cuándo, duración y proyecto y retocarla. También valen «mates 30 min y dibujo 1h 20», «la primera 20 y la segunda 40» o «todas 30 minutos». «cancela» para dejarlo.";
 
   const listado = items.map(resumenItem).join("\n");
 
@@ -427,11 +535,307 @@ async function proponerRecordatorio(
   detalle: string,
   recordarAt: string,
   nota?: string,
+  id?: string,
 ): Promise<void> {
   await proponerItems(
     chatId,
-    [{ clase: "recordatorio", titulo, detalle, recordarAt }],
+    [{ clase: "recordatorio", ...(id ? { id } : {}), titulo, detalle, recordarAt }],
     nota,
+  );
+}
+
+async function proponerEvento(
+  chatId: number | string,
+  evento: Omit<EventoPropuesto, "clase">,
+  nota?: string,
+): Promise<void> {
+  await proponerItems(chatId, [{ clase: "evento", ...evento }], nota);
+}
+
+function fechaCortaFinDeAnio(): string {
+  return `${Number(hoyISO().slice(0, 4)) + 1}-12-31`;
+}
+
+function formatearRecordatorios(lista: Recordatorio[]): string {
+  return lista
+    .map((recordatorio, indice) => {
+      const atrasado = new Date(recordatorio.recordar_at).getTime() < Date.now();
+      return `${indice + 1}. ${recordatorio.titulo} — ${fechaHoraLarga(recordatorio.recordar_at)}${atrasado ? " (atrasado)" : ""}`;
+    })
+    .join("\n");
+}
+
+async function recordatoriosDelRango(rango: RangoFechas): Promise<Recordatorio[]> {
+  if (rango === "todo") return listarRecordatoriosPendientes(100);
+
+  const { desde, hasta } = rangoFechas(rango);
+  return listarRecordatoriosEntre(desde, hasta);
+}
+
+const PALABRAS_SIN_TITULO = new Set([
+  "hoy",
+  "manana",
+  "esta",
+  "este",
+  "semana",
+  "mes",
+  "que",
+  "viene",
+  "proximo",
+  "siguiente",
+  "las",
+  "los",
+  "para",
+  "del",
+  "dia",
+  "recordatorio",
+  "alarma",
+  "aviso",
+]);
+
+function puntuacionRecordatorio(
+  texto: string,
+  recordatorio: Recordatorio,
+): number {
+  const titulo = normalizarNombre(recordatorio.titulo);
+  const palabras = normalizarNombre(texto)
+    .split(/[^a-z0-9]+/)
+    .filter((p) => p.length >= 3 && !PALABRAS_SIN_TITULO.has(p));
+
+  return palabras.filter((palabra) => titulo.includes(palabra)).length;
+}
+
+/** Los candidatos con más palabras en común; evita que «prueba» empate todo. */
+function filtrarRecordatorios(
+  texto: string,
+  lista: Recordatorio[],
+): Recordatorio[] {
+  const puntuados = lista
+    .map((recordatorio) => ({
+      recordatorio,
+      puntos: puntuacionRecordatorio(texto, recordatorio),
+    }))
+    .filter((item) => item.puntos > 0);
+
+  const maximo = Math.max(0, ...puntuados.map((item) => item.puntos));
+  return puntuados
+    .filter((item) => item.puntos === maximo)
+    .map((item) => item.recordatorio);
+}
+
+function elegirRecordatorio(
+  texto: string,
+  lista: Recordatorio[],
+): Recordatorio | null {
+  const numero = texto.trim().match(/^\d{1,2}$/);
+  if (numero) return lista[Number(numero[0]) - 1] ?? null;
+
+  const buscado = normalizarNombre(texto);
+  if (!buscado) return null;
+
+  return (
+    lista.find((r) => normalizarNombre(r.titulo) === buscado) ??
+    filtrarRecordatorios(texto, lista)[0] ??
+    null
+  );
+}
+
+async function responderListaRecordatorios(
+  chatId: number | string,
+  rango: RangoFechas,
+): Promise<void> {
+  const lista = await recordatoriosDelRango(rango);
+
+  if (lista.length === 0) {
+    await enviarMensaje(
+      chatId,
+      `No tienes recordatorios pendientes ${ETIQUETA_RANGO[rango]}.\nPídeme uno: «recuérdame mañana a las 9:30 llamar al banco».`,
+    );
+    return;
+  }
+
+  await enviarMensaje(
+    chatId,
+    `⏰ Recordatorios ${ETIQUETA_RANGO[rango]} (${lista.length})\n\n${formatearRecordatorios(lista)}\n\nPuedes decir «cancela el recordatorio 2» o «edita el recordatorio 2».`,
+  );
+}
+
+async function iniciarCancelacionRecordatorio(
+  chatId: number | string,
+  rango: RangoFechas,
+  texto: string | null,
+): Promise<void> {
+  const lista = await recordatoriosDelRango(rango);
+
+  if (lista.length === 0) {
+    await enviarMensaje(
+      chatId,
+      `No hay recordatorios pendientes ${ETIQUETA_RANGO[rango]} que cancelar.`,
+    );
+    return;
+  }
+
+  const candidatos = texto ? filtrarRecordatorios(texto, lista) : lista;
+
+  if (texto && candidatos.length === 0) {
+    await enviarMensaje(
+      chatId,
+      `No encuentro «${texto}» ${ETIQUETA_RANGO[rango]}.\n\n${formatearRecordatorios(lista)}\n\nDime el número del que quieres cancelar.`,
+    );
+    return;
+  }
+
+  if (candidatos.length === 1) {
+    await borrarRecordatorio(candidatos[0].id);
+    await enviarMensaje(
+      chatId,
+      `🗑️ Cancelado: ${candidatos[0].titulo} — ${fechaHoraLarga(candidatos[0].recordar_at)}`,
+    );
+    return;
+  }
+
+  await guardarEstado(chatId, {
+    accion: "recordatorio_cancelar_elegir",
+    datos: { ids: candidatos.map((r) => r.id) },
+  });
+  await enviarMensaje(
+    chatId,
+    `¿Cuál cancelo?\n\n${formatearRecordatorios(candidatos)}\n\nDime el número o parte del título. «cancela» para dejarlo.`,
+  );
+}
+
+function textoDelCambio(texto: string, titulo: string): string {
+  const palabras = new Set(
+    normalizarNombre(titulo)
+      .split(/[^a-z0-9]+/)
+      .filter((palabra) => palabra.length > 2),
+  );
+
+  const resto = texto
+    .split(/\s+/)
+    .filter((palabra) => !palabras.has(normalizarNombre(palabra)))
+    .join(" ")
+    .trim();
+
+  return resto || texto;
+}
+
+async function interpretarCambioRecordatorio(
+  chatId: number | string,
+  recordatorio: Recordatorio,
+  texto: string,
+): Promise<void> {
+  const cambio = textoDelCambio(texto, recordatorio.titulo);
+  const cambiaTitulo =
+    /\b(?:titulo|nombre|llam(?:arlo|arla|ar)|ponle|que\s+se\s+llame)\b/i.test(
+      cambio,
+    );
+  const interpretado = await interpretarRecordatorio(cambio, {
+    titulo: recordatorio.titulo,
+    detalle: recordatorio.detalle,
+    recordarAt: recordatorio.recordar_at,
+  });
+
+  if (!interpretado.recordarAt) {
+    await enviarMensaje(
+      chatId,
+      "No he sabido qué cambiar. Dime, por ejemplo, «a las 10:30», «mañana a las 9» o «el 8 de diciembre a las 18:00».",
+    );
+    return;
+  }
+
+  await limpiarAccion(chatId);
+  await proponerRecordatorio(
+    chatId,
+    cambiaTitulo ? interpretado.titulo : recordatorio.titulo,
+    cambiaTitulo ? interpretado.detalle : recordatorio.detalle,
+    interpretado.recordarAt,
+    "✏️ He preparado el cambio.",
+    recordatorio.id,
+  );
+}
+
+async function iniciarEdicionRecordatorio(
+  chatId: number | string,
+  rango: RangoFechas,
+  texto: string | null,
+): Promise<void> {
+  const lista = await recordatoriosDelRango(rango);
+
+  if (lista.length === 0) {
+    await enviarMensaje(
+      chatId,
+      `No hay recordatorios pendientes ${ETIQUETA_RANGO[rango]} que editar.`,
+    );
+    return;
+  }
+
+  const candidatos = texto ? filtrarRecordatorios(texto, lista) : lista;
+
+  if (texto && candidatos.length === 1) {
+    await interpretarCambioRecordatorio(chatId, candidatos[0], texto);
+    return;
+  }
+
+  if (candidatos.length === 1) {
+    await guardarEstado(chatId, {
+      accion: "recordatorio_editar_cambio",
+      datos: { id: candidatos[0].id },
+    });
+    await enviarMensaje(
+      chatId,
+      `Vas a editar «${candidatos[0].titulo}» (${fechaHoraLarga(candidatos[0].recordar_at)}).\n¿Qué cambio? Dime «a las 10:30», «mañana a las 9» o «el 8 de diciembre a las 18:00».`,
+    );
+    return;
+  }
+
+  await guardarEstado(chatId, {
+    accion: "recordatorio_editar_elegir",
+    datos: { ids: candidatos.map((r) => r.id) },
+  });
+  await enviarMensaje(
+    chatId,
+    `¿Cuál quieres editar?\n\n${formatearRecordatorios(candidatos)}\n\nDime el número o parte del título. «cancela» para dejarlo.`,
+  );
+}
+
+async function responderCalendario(
+  chatId: number | string,
+  rango: RangoFechas,
+  categoria: CategoriaEvento | null,
+  texto: string,
+): Promise<void> {
+  const fechaSuelta = rango === "todo" ? fechaDeTexto(texto) : null;
+  const rangoFinal: RangoFechas = fechaSuelta ? "todo" : rango;
+  const { desde, hasta } = fechaSuelta
+    ? { desde: fechaSuelta, hasta: fechaSuelta }
+    : rangoFinal === "todo"
+      ? { desde: hoyISO(), hasta: fechaCortaFinDeAnio() }
+      : rangoFechas(rangoFinal);
+
+  const eventos = await listarEventos(desde, hasta, categoria);
+  const nombreCategoria = categoria
+    ? CATEGORIAS_EVENTO[categoria].etiqueta.toLowerCase()
+    : "eventos";
+
+  if (eventos.length === 0) {
+    await enviarMensaje(
+      chatId,
+      `No hay ${nombreCategoria} ${fechaSuelta ? `el ${fechaCorta(fechaSuelta)}` : ETIQUETA_RANGO[rangoFinal]}.`,
+    );
+    return;
+  }
+
+  const lineas = eventos
+    .map(
+      (evento, indice) =>
+        `${indice + 1}. ${fechaLargaDia(evento.fecha)}${evento.hora ? ` a las ${evento.hora}` : ""} — ${evento.titulo} · ${CATEGORIAS_EVENTO[evento.categoria].etiqueta}`,
+    )
+    .join("\n");
+
+  await enviarMensaje(
+    chatId,
+    `📅 ${nombreCategoria[0].toUpperCase() + nombreCategoria.slice(1)} ${fechaSuelta ? `el ${fechaCorta(fechaSuelta)}` : ETIQUETA_RANGO[rangoFinal]} (${eventos.length})\n\n${lineas}`,
   );
 }
 
@@ -568,9 +972,11 @@ async function insertarTarea(datos: {
   titulo: string;
   detalle: string;
   tipo: Tipo;
+  fecha: string | null;
   duracion: number | null;
   paralelizable: boolean;
   proyectoId: string | null;
+  chatId: number | string;
 }): Promise<string> {
   const insforge = insforgeServer();
 
@@ -585,7 +991,7 @@ async function insertarTarea(datos: {
         duracion_estimada_min: datos.duracion,
         paralelizable: datos.paralelizable,
         proyecto_id: datos.proyectoId,
-        fecha_para: fechaParaTipo(datos.tipo),
+        fecha_para: datos.fecha ?? fechaParaTipo(datos.tipo),
       },
     ])
     .select("id");
@@ -594,6 +1000,15 @@ async function insertarTarea(datos: {
 
   const id = (data as Array<{ id?: string }> | null)?.[0]?.id;
   if (!id) throw new Error("No se pudo guardar la tarea");
+
+  if (datos.tipo === "programada" && datos.fecha) {
+    await crearRecordatoriosTarea({
+      titulo: datos.titulo,
+      detalle: datos.detalle,
+      fecha: datos.fecha,
+      chatId: datos.chatId,
+    });
+  }
 
   return id;
 }
@@ -665,7 +1080,11 @@ export async function POST(request: Request) {
         "· Confirmar: te enseño lo que he entendido y espero tu «sí», «no» o un cambio.\n" +
         "· Varias tareas: «comprar pan; llamar a Ana; recoger el paquete» y te las propongo todas juntas.\n" +
         "· Recordatorios: «recuérdame el viernes a las 18:00 llamar a Ana», «créame una alarma mañana a las 8», «ponme un recordatorio» o «avísame el lunes a las 9». Te aviso por aquí a esa hora.\n" +
-        "· Ver recordatorios: «mis recordatorios» te lista los próximos avisos.\n" +
+        "· Ver recordatorios: «mis recordatorios», «dime los recordatorios de hoy» o «los de esta semana».\n" +
+        "· Cancelar o editar: «cancela el recordatorio de hoy», «cancela el del banco», «edita el recordatorio de mañana» y te pregunto cuál y qué cambio.\n" +
+        "· Calendario: «el 8 de diciembre tengo un examen de cálculo», «apunta la entrega del proyecto el 20/12» o «el viernes 20 a las 10:00 tengo una reunión».\n" +
+        "· Consultar calendario: «dime los exámenes de la semana que viene», «¿qué entregas tengo este mes?».\n" +
+        "· Tareas lejanas: «quiero una tarea para el día 8 del mes que viene», «para dentro de dos semanas» o «dentro de un mes»; te aviso el día antes y el mismo día a las 9:00.\n" +
         "· Proyectos: «crea el proyecto Kerbal» y «mete en el proyecto Kerbal la tarea …».\n" +
         "· Borrar: «elimina la tarea anterior», «elimina la tarea de comprar pilas» o «elimina tareas» y te pregunto de qué columna.\n" +
         "· Si no tengo claro dónde va una tarea, te pregunto: «hoy», «mañana», «esta semana» o un proyecto.",
@@ -673,44 +1092,50 @@ export async function POST(request: Request) {
     return Response.json({ ok: true });
   }
 
-  // Lista de recordatorios: funciona aunque haya una propuesta abierta.
+  // Órdenes rápidas de recordatorios y calendario: funcionan aunque haya
+  // una propuesta abierta.
   const comandoRapido = parsearComando(texto);
 
-  if (comandoRapido?.tipo === "listar_recordatorios") {
-    try {
-      const recordatorios = await listarRecordatoriosPendientes();
-
-      if (recordatorios.length === 0) {
-        await enviarMensaje(
-          chatId,
-          "No tienes recordatorios próximos.\nPídeme uno: «recuérdame mañana a las 9:30 llamar al banco».",
-        );
-        return Response.json({ ok: true, recordatorios: 0 });
-      }
-
-      const lineas = recordatorios.map((recordatorio, indice) => {
-        const atrasado =
-          new Date(recordatorio.recordar_at).getTime() < Date.now();
-
-        return `${indice + 1}. ${recordatorio.titulo} — ${fechaHoraLarga(recordatorio.recordar_at)}${atrasado ? " (pendiente de envío)" : ""}`;
-      });
-
-      await enviarMensaje(
-        chatId,
-        `⏰ Próximos recordatorios (${recordatorios.length})\n\n${lineas.join("\n")}\n\nSe envían por aquí a su hora.`,
-      );
-      return Response.json({
-        ok: true,
-        recordatorios: recordatorios.length,
-      });
-    } catch (error) {
-      console.error("No se pudieron listar los recordatorios", error);
-      await enviarMensaje(
-        chatId,
-        "No he podido leer los recordatorios. Inténtalo otra vez.",
-      );
-      return Response.json({ ok: true, error: "recordatorios" });
+  try {
+    if (comandoRapido?.tipo === "listar_recordatorios") {
+      await responderListaRecordatorios(chatId, comandoRapido.rango);
+      return Response.json({ ok: true, recordatorios: true });
     }
+
+    if (comandoRapido?.tipo === "cancelar_recordatorio") {
+      await iniciarCancelacionRecordatorio(
+        chatId,
+        comandoRapido.rango,
+        comandoRapido.texto,
+      );
+      return Response.json({ ok: true, recordatorio: "cancelar" });
+    }
+
+    if (comandoRapido?.tipo === "editar_recordatorio") {
+      await iniciarEdicionRecordatorio(
+        chatId,
+        comandoRapido.rango,
+        comandoRapido.texto,
+      );
+      return Response.json({ ok: true, recordatorio: "editar" });
+    }
+
+    if (comandoRapido?.tipo === "consultar_calendario") {
+      await responderCalendario(
+        chatId,
+        comandoRapido.rango,
+        comandoRapido.categoria,
+        comandoRapido.texto,
+      );
+      return Response.json({ ok: true, calendario: true });
+    }
+  } catch (error) {
+    console.error("No se pudo ejecutar la orden rápida", error);
+    await enviarMensaje(
+      chatId,
+      "No he podido consultar esa información. Inténtalo otra vez.",
+    );
+    return Response.json({ ok: true, error: "orden rápida" });
   }
 
   let pendiente: TareaPendiente | null = null;
@@ -720,6 +1145,124 @@ export async function POST(request: Request) {
     const nombres = listaProyectos.map((p) => p.nombre);
     const estado = await obtenerEstado(chatId);
     const accion = estado?.accion ?? null;
+
+    // ---------------------------------------------------------------
+    // Elegir recordatorio para cancelar o editar
+    // ---------------------------------------------------------------
+    if (accion === "recordatorio_cancelar_elegir") {
+      if (respuestaNegativa(texto)) {
+        await limpiarAccion(chatId);
+        await enviarMensaje(chatId, "Vale, no cancelo nada.");
+        return Response.json({ ok: true, cancelada: true });
+      }
+
+      const ids = Array.isArray(estado?.datos?.ids)
+        ? (estado.datos.ids as string[])
+        : [];
+      const pendientes = await listarRecordatoriosPendientes(150);
+      const lista = pendientes.filter((r) => ids.includes(r.id));
+      const elegido = elegirRecordatorio(texto, lista);
+
+      if (!elegido) {
+        await enviarMensaje(
+          chatId,
+          `No sé cuál dices.\n\n${formatearRecordatorios(lista)}\n\nDime el número o parte del título.`,
+        );
+        return Response.json({ ok: true, pregunta: true });
+      }
+
+      await borrarRecordatorio(elegido.id);
+      await limpiarAccion(chatId);
+      await enviarMensaje(
+        chatId,
+        `🗑️ Cancelado: ${elegido.titulo} — ${fechaHoraLarga(elegido.recordar_at)}`,
+      );
+      return Response.json({ ok: true, eliminada: true });
+    }
+
+    if (accion === "recordatorio_editar_elegir") {
+      if (respuestaNegativa(texto)) {
+        await limpiarAccion(chatId);
+        await enviarMensaje(chatId, "Vale, no edito nada.");
+        return Response.json({ ok: true, cancelada: true });
+      }
+
+      const ids = Array.isArray(estado?.datos?.ids)
+        ? (estado.datos.ids as string[])
+        : [];
+      const pendientes = await listarRecordatoriosPendientes(150);
+      const lista = pendientes.filter((r) => ids.includes(r.id));
+      const elegido = elegirRecordatorio(texto, lista);
+
+      if (!elegido) {
+        await enviarMensaje(
+          chatId,
+          `No sé cuál dices.\n\n${formatearRecordatorios(lista)}\n\nDime el número o parte del título.`,
+        );
+        return Response.json({ ok: true, pregunta: true });
+      }
+
+      await guardarEstado(chatId, {
+        accion: "recordatorio_editar_cambio",
+        datos: { id: elegido.id },
+      });
+      await enviarMensaje(
+        chatId,
+        `Vas a editar «${elegido.titulo}» (${fechaHoraLarga(elegido.recordar_at)}).\n¿Qué cambio? Dime «a las 10:30», «mañana a las 9» o «el 8 de diciembre a las 18:00».`,
+      );
+      return Response.json({ ok: true, pregunta: true });
+    }
+
+    if (accion === "recordatorio_editar_cambio") {
+      if (respuestaNegativa(texto)) {
+        await limpiarAccion(chatId);
+        await enviarMensaje(chatId, "Vale, no cambio nada.");
+        return Response.json({ ok: true, cancelada: true });
+      }
+
+      const id = String(estado?.datos?.id ?? "");
+      const recordatorio = id ? await obtenerRecordatorio(id) : null;
+
+      if (!recordatorio) {
+        await limpiarAccion(chatId);
+        await enviarMensaje(chatId, "Ese recordatorio ya no existe.");
+        return Response.json({ ok: true });
+      }
+
+      await interpretarCambioRecordatorio(chatId, recordatorio, texto);
+      return Response.json({ ok: true, pregunta: true, confirmar: true });
+    }
+
+    if (accion === "evento_cuando") {
+      if (respuestaNegativa(texto)) {
+        await limpiarAccion(chatId);
+        await enviarMensaje(chatId, "Vale, no añado el evento.");
+        return Response.json({ ok: true, cancelada: true });
+      }
+
+      const original = String(estado?.datos?.texto ?? "").trim();
+      const interpretado = await interpretarEvento(
+        `${original}\nCuándo: ${texto}`,
+      );
+
+      if (!interpretado.fecha) {
+        await enviarMensaje(
+          chatId,
+          "No he sabido qué día es. Dime, por ejemplo, «el 8 de diciembre» o «el viernes 20 a las 10:00».",
+        );
+        return Response.json({ ok: true, pregunta: true });
+      }
+
+      await limpiarAccion(chatId);
+      await proponerEvento(chatId, {
+        titulo: interpretado.titulo,
+        detalle: interpretado.detalle,
+        categoria: interpretado.categoria,
+        fecha: interpretado.fecha,
+        hora: interpretado.hora,
+      });
+      return Response.json({ ok: true, pregunta: true, confirmar: true });
+    }
 
     // ---------------------------------------------------------------
     // Conversaciones que dejamos abiertas en mensajes anteriores
@@ -797,6 +1340,12 @@ export async function POST(request: Request) {
                 ...tarea,
                 titulo: borrador.titulo ?? tarea.titulo,
                 tipo,
+                fecha:
+                  borrador.fecha !== undefined
+                    ? borrador.fecha
+                    : tipo === "programada"
+                      ? tarea.fecha
+                      : null,
                 duracion:
                   "duracion" in borrador
                     ? (borrador.duracion ?? null)
@@ -866,10 +1415,25 @@ export async function POST(request: Request) {
             if (interpretado.recordarAt) {
               actualizados = [
                 {
-                  clase: "recordatorio",
+                  ...unico,
                   titulo: interpretado.titulo,
                   detalle: interpretado.detalle,
                   recordarAt: interpretado.recordarAt,
+                },
+              ];
+            }
+          } else if (unico?.clase === "evento") {
+            const interpretado = await interpretarEvento(texto);
+
+            if (interpretado.fecha) {
+              actualizados = [
+                {
+                  ...unico,
+                  titulo: interpretado.titulo,
+                  detalle: interpretado.detalle,
+                  categoria: interpretado.categoria,
+                  fecha: interpretado.fecha,
+                  hora: interpretado.hora,
                 },
               ];
             }
@@ -903,14 +1467,30 @@ export async function POST(request: Request) {
 
         for (const item of items) {
           if (item.clase === "tarea") {
-            const id = await insertarTarea(item);
+            const id = await insertarTarea({ ...item, chatId });
             tareasCreadas.push(id);
+          } else if (item.clase === "recordatorio") {
+            if (item.id) {
+              await actualizarRecordatorio(item.id, {
+                titulo: item.titulo,
+                detalle: item.detalle,
+                recordarAt: item.recordarAt,
+              });
+            } else {
+              await guardarRecordatorio({
+                titulo: item.titulo,
+                detalle: item.detalle,
+                recordarAt: item.recordarAt,
+                chatId,
+              });
+            }
           } else {
-            await guardarRecordatorio({
+            await guardarEvento({
               titulo: item.titulo,
               detalle: item.detalle,
-              recordarAt: item.recordarAt,
-              chatId,
+              categoria: item.categoria,
+              fecha: item.fecha,
+              hora: item.hora,
             });
           }
         }
@@ -922,11 +1502,15 @@ export async function POST(request: Request) {
         }
 
         const creadas = items
-          .map((item) =>
-            item.clase === "recordatorio"
-              ? `⏰ ${item.titulo} — ${fechaHoraLarga(item.recordarAt)}`
-              : `✅ ${item.titulo} → ${item.proyectoNombre ?? ETIQUETA_TIPO[item.tipo]}`,
-          )
+          .map((item) => {
+            if (item.clase === "recordatorio") {
+              return `${item.id ? "✏️" : "⏰"} ${item.titulo} — ${fechaHoraLarga(item.recordarAt)}`;
+            }
+            if (item.clase === "evento") {
+              return `📅 ${item.titulo} — ${fechaLargaDia(item.fecha)}${item.hora ? ` a las ${item.hora}` : ""}`;
+            }
+            return `✅ ${item.titulo} → ${item.proyectoNombre ?? ETIQUETA_TIPO[item.tipo]}${item.tipo === "programada" && item.fecha ? ` · ${fechaCorta(item.fecha)}` : ""}`;
+          })
           .join("\n");
 
         await enviarMensaje(
@@ -1052,6 +1636,7 @@ export async function POST(request: Request) {
           titulo: clasificacion.titulo,
           detalle: clasificacion.detalle,
           tipo: "proyecto" as const,
+          fecha: null,
           duracion: clasificacion.duracion_estimada_min,
           paralelizable: clasificacion.paralelizable,
           proyectoId: proyecto.id,
@@ -1182,6 +1767,7 @@ export async function POST(request: Request) {
           titulo: clasificacion.titulo,
           detalle: clasificacion.detalle,
           tipo: "proyecto" as const,
+          fecha: null,
           duracion: clasificacion.duracion_estimada_min,
           paralelizable: clasificacion.paralelizable,
           proyectoId: proyecto.id,
@@ -1299,6 +1885,7 @@ export async function POST(request: Request) {
           titulo: tituloPendiente,
           detalle: pendienteDetalle,
           tipo: "proyecto",
+          fecha: null,
           duracion: pendienteDuracion,
           paralelizable: pendienteParalelizable,
           proyectoId: proyecto.id,
@@ -1314,6 +1901,7 @@ export async function POST(request: Request) {
         titulo: tituloPendiente,
         detalle: pendienteDetalle,
         tipo,
+        fecha: null,
         duracion: pendienteDuracion,
         paralelizable: pendienteParalelizable,
         proyectoId: null,
@@ -1363,6 +1951,34 @@ export async function POST(request: Request) {
     }
 
     // ---------------------------------------------------------------
+    // Evento de calendario: examen, entrega, reunión, cita…
+    // ---------------------------------------------------------------
+    if (pareceEventoCalendario(texto)) {
+      const evento = await interpretarEvento(texto);
+
+      if (!evento.fecha) {
+        await guardarEstado(chatId, {
+          accion: "evento_cuando",
+          datos: { texto },
+        });
+        await enviarMensaje(
+          chatId,
+          `Vale: «${evento.titulo}».\n¿Qué día es? Dímelo así: «el 8 de diciembre», «el viernes 20» o «mañana a las 10:00».`,
+        );
+        return Response.json({ ok: true, pregunta: true });
+      }
+
+      await proponerEvento(chatId, {
+        titulo: evento.titulo,
+        detalle: evento.detalle,
+        categoria: evento.categoria,
+        fecha: evento.fecha,
+        hora: evento.hora,
+      });
+      return Response.json({ ok: true, pregunta: true, confirmar: true });
+    }
+
+    // ---------------------------------------------------------------
     // Nota nueva: una o varias tareas
     // ---------------------------------------------------------------
     const clasificaciones = await clasificarTareas(texto, nombres);
@@ -1386,6 +2002,7 @@ export async function POST(request: Request) {
         titulo: clasificacion.titulo,
         detalle: clasificacion.detalle,
         tipo: clasificacion.tipo,
+        fecha: clasificacion.fecha,
         duracion: clasificacion.duracion_estimada_min,
         paralelizable: clasificacion.paralelizable,
         proyectoId: proyecto?.id ?? null,

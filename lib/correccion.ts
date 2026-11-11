@@ -1,5 +1,7 @@
+import { hoyISO, mananaISO } from "./dates";
 import { interpretarDestinoRapido, normalizarTexto } from "./destino";
 import { parsearTiempo } from "./duration";
+import { fechaDeTexto } from "./fechas";
 import { limpiarTitulo } from "./titulo";
 import type { Tipo } from "./types";
 
@@ -10,6 +12,7 @@ import type { Tipo } from "./types";
 export interface CambioPropuesta {
   titulo?: string;
   tipo?: Tipo;
+  fecha?: string | null;
   proyectoNombre?: string | null;
   duracion?: number | null;
 }
@@ -248,6 +251,7 @@ function minutosDeTrozo(
 export interface BorradorTarea {
   titulo?: string;
   tipo?: Tipo;
+  fecha?: string | null;
   duracion?: number | null;
   proyectoNombre?: string | null;
 }
@@ -292,6 +296,17 @@ export function parsearBorradorTareas(texto: string): BorradorTarea[] | null {
           item.tipo = destino.accion as Tipo;
         } else if (destino?.accion === "proyecto") {
           item.tipo = "proyecto";
+        }
+      } else if (clave.startsWith("fecha")) {
+        const limpio = normalizarTexto(valor);
+
+        if (/^(?:sin|ninguna|ninguno|nada|-|—|0)$/.test(limpio)) {
+          item.fecha = null;
+        } else if (/^\d{4}-\d{2}-\d{2}$/.test(valor.trim())) {
+          item.fecha = valor.trim();
+        } else {
+          const fecha = fechaDeTexto(valor, hoyISO());
+          if (fecha) item.fecha = fecha;
         }
       } else if (
         clave.startsWith("duracion") ||
@@ -449,6 +464,15 @@ export function interpretarCorreccion(
     }
   }
 
+  // «mejor el 8 de diciembre», «pásala al 20/12».
+  const fecha = fechaDeTexto(limpio);
+  if (fecha) {
+    cambio.fecha = fecha;
+    if (fecha > mananaISO()) cambio.tipo = "programada";
+    else if (fecha === mananaISO()) cambio.tipo = "manana";
+    else if (fecha === hoyISO()) cambio.tipo = "hoy";
+  }
+
   // «cambia la duración a 45 minutos», «media hora», «sin duración».
   const duracion = extraerDuracion(limpio);
   if (duracion !== undefined) cambio.duracion = duracion;
@@ -484,8 +508,10 @@ export function interpretarCorreccion(
       (cambio.proyectoNombre ?? null) === (propuesta.proyectoNombre ?? null);
     const mismaDuracion =
       cambio.duracion === undefined || cambio.duracion === propuesta.duracion;
+    const mismaFecha =
+      cambio.fecha === undefined || cambio.fecha === null;
 
-    if (mismoTipo && mismoProyecto && mismaDuracion) return null;
+    if (mismoTipo && mismoProyecto && mismaDuracion && mismaFecha) return null;
   }
 
   return cambio;

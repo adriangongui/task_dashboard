@@ -3,7 +3,7 @@
 Sistema personal de gestión de tareas con dos caras:
 
 - **Bot de Telegram** (`/api/telegram/webhook`): mandas una nota de texto (o una transcripción de voz) y Groq la convierte en una propuesta de tarea (título corto, tipo, duración estimada, si es paralelizable y proyecto) que confirmas con «sí» antes de que se guarde.
-- **Panel web** (Next.js 14 App Router + InsForge): columnas Hoy / Mañana / Esta semana / Proyectos futuros / Sin terminar, arrastre de tareas entre columnas, historial de las hechas en los últimos 3 días, progreso por proyecto, detalle en panel lateral, plan del día según el tiempo que tengas y alta manual de tareas eligiendo destino. El panel pide una contraseña antes de mostrar nada y cada columna o proyecto se puede abrir a pantalla completa, solo con sus tareas.
+- **Panel web** (Next.js 14 App Router + InsForge): columnas Hoy / Mañana / Esta semana / Programadas / Proyectos futuros / Sin terminar, arrastre de tareas entre columnas, historial de las hechas en los últimos 3 días, progreso por proyecto, detalle en panel lateral, plan del día según el tiempo que tengas, alta manual de tareas y un **calendario mensual a pantalla completa** para exámenes, entregas, citas y demás eventos. El panel pide una contraseña antes de mostrar nada y cada columna o proyecto se puede abrir a pantalla completa, solo con sus tareas.
 
 ```
 Telegram  →  /api/telegram/webhook  →  Groq (clasifica)  →  InsForge (Postgres)
@@ -122,7 +122,10 @@ Detalles del webhook:
 - Si le mandas otra orden («crea el proyecto X»), descarta la propuesta y ejecuta la orden.
 - **Varias tareas en un mensaje**: si la nota enumera cosas («comprar pan; llamar a Ana; recoger el paquete»), el clasificador devuelve una lista y el bot propone todas juntas antes de crearlas. Si alguna no dice cuándo va, pregunta una vez por todas.
 - **Recordatorios con hora**: «recuérdame el viernes a las 18:00 llamar a Ana». También entiende «créame una alarma mañana a las 8», «créame un recordatorio», «ponme un aviso», «hazme un recordatorio», «agéndame una alarma», «prográmame un aviso», «mándame un recordatorio», «quiero un recordatorio», «¿me pones una alarma?», «avísame el lunes a las 9», «no me olvides de llamar a mamá mañana» o simplemente «alarma mañana a las 6:45». El bot propone el asunto y la fecha, y a esa hora te manda un mensaje al chat. Si no dices cuándo, te lo pregunta. El botón **✏️ Editar** copia al portapapeles un borrador (`recuérdame el 14/11/2026 a las 18:00: Llamar a Ana`): lo pegas en el campo de texto, cambias lo que quieras y lo mandas.
-- **Consultar recordatorios**: «mis recordatorios» (o «recordatorios», «qué recordatorios tengo») devuelve la lista de los próximos avisos con el día completo y la hora; los que ya vencieron y siguen pendientes aparecen marcados como «pendiente de envío». También se pueden ver y borrar en la sección **Recordatorios** del panel.
+- **Consultar recordatorios**: «mis recordatorios» (o «recordatorios», «qué recordatorios tengo») devuelve la lista de los próximos avisos con el día completo y la hora. Acepta rangos: «dime los recordatorios de hoy», «los de mañana» o «los de esta semana». También se pueden ver y borrar en la sección **Recordatorios** del panel.
+- **Cancelar y editar recordatorios por chat**: «cancela el recordatorio de hoy», «cancela el del banco» o «cancela el recordatorio 2»; si hay varios candidatos, el bot lista y pide el número. «edita el recordatorio de mañana» o «edita el recordatorio de llamar a Ana» abre el mismo selector y después pregunta el cambio («a las 10:30», «mañana a las 9», «el 8 de diciembre a las 18:00»). El cambio vuelve a pedir confirmación antes de guardarse y conserva el título si solo cambias la hora.
+- **Calendario**: «el 8 de diciembre tengo un examen de cálculo», «apunta la entrega del proyecto el 20/12» o «el viernes 20 a las 10:00 tengo una reunión». El bot propone el evento con su categoría (examen, entrega, reunión, médico, cumpleaños, viaje u otro) y lo añade al calendario tras confirmar. Si no dices el día, te lo pregunta. Consultas: «dime los exámenes de la semana que viene», «¿qué entregas tengo este mes?» o «dime los exámenes del 8 de diciembre».
+- **Tareas para fechas lejanas**: «quiero una tarea para el día 8 del mes que viene», «para el 20 de diciembre», «para dentro de dos semanas», «dentro de un mes» o «el año que viene». Se guardan en **Programadas** con su fecha; el cron las pasa a **Mañana** el día antes y a **Hoy** el mismo día, y se crean dos recordatorios automáticos (el día antes y ese día a las 9:00).
 - **Fechas relativas**: el bot conoce siempre el día de la semana, la fecha, el año y la hora en Madrid, y calcula él mismo «hoy», «mañana», «pasado mañana», «ayer», «anteayer», «dentro de N días», «la semana que viene», «el lunes» o «el 10 de noviembre». La confirmación muestra el día completo, por ejemplo «Viernes, 6 de noviembre de 2026 a las 14:00»; «a las dos» se toma como las 14:00 salvo que digas «de la madrugada».
 - Los proyectos **solo se crean si lo pides**: «crea el proyecto Kerbal» o «crea un nuevo proyecto titulado Kerbal». Si el clasificador sugiere un proyecto que no existe, la tarea se guarda sin proyecto.
 - Para meter una tarea en un proyecto: «mete en el proyecto Kerbal la tarea jugar al roblox». Si no dices la tarea, el bot pregunta «¿Qué tarea meto en Kerbal?» y usa tu siguiente mensaje.
@@ -190,13 +193,17 @@ El botón **Recordatorios** de la cabecera abre una sección con dos pestañas:
 - **Próximos**: los que aún no se han enviado, ordenados por fecha, con el día completo y la hora. Si la hora ya pasó y siguen pendientes, aparecen marcados como «Pendiente de envío».
 - **Enviados**: el historial de avisos que ya llegaron por Telegram.
 
-Cada recordatorio se puede borrar con la papelera y una confirmación; si se borra antes de la hora, el cron ya no lo envía. Se crean por Telegram y se guardan en `recordatorios`; el panel los lee y borra a través de `/api/recordatorios`, que exige la sesión del panel.
+Cada recordatorio se puede borrar con la papelera y una confirmación; si se borra antes de la hora, el cron ya no lo envía. Se crean por Telegram y se guardan en `recordatorios`; el panel los lee y borra a través de `/api/recordatorios`, que exige la sesión del panel. También se pueden cancelar y editar por Telegram, con la lista numerada y confirmación.
+
+### Calendario
+
+El botón **Calendario** de la cabecera abre un mes completo (lunes a domingo) a pantalla completa. Cada día muestra sus eventos con el color de su categoría; al pulsar un día se abre el panel lateral para añadir, editar o borrar un evento, con título, fecha, hora opcional, tipo y detalle. Los eventos creados por Telegram aparecen en el mismo calendario y las consultas del bot leen la misma tabla (`calendario_eventos`).
 
 ### Avisos en el móvil (notificaciones push)
 
 Dentro de **Recordatorios** hay una tarjeta **Avisos en el móvil**. Al pulsar **Activar** el navegador pide permiso, suscribe el dispositivo y lo guarda en `ajustes` (clave `push_suscripciones`); desde ese momento cada recordatorio llega como notificación del sistema, aunque la app esté cerrada, y al tocarla se abre el panel de recordatorios.
 
-- **Android**: funciona en Chrome/Edge, instalada o no. La notificación usa `vibrate: [200, 100, 200, 100, 300]` (dos pulsos cortos y uno largo); si el móvil está en silencio o con vibración desactivada, no vibrará.
+- **Android**: funciona en Chrome/Edge, instalada o no. La notificación usa un patrón largo (`700, 250, 700, 250, 700, 250, 1200`) y `requireInteraction`, lo más parecido a una alarma que permite una notificación web. No puede sonar en bucle ni saltarse el modo silencio: para una alarma real haría falta una app nativa. Si el móvil está en silencio o con vibración desactivada, no vibrará.
 - **iPhone/iPad**: hace falta iOS 16.4 o superior y abrir la app **desde el icono de la pantalla de inicio**; en Safari normal no aparece la opción. iOS no permite elegir el patrón de vibración: usa el aviso del sistema.
 - **Probar** manda una notificación de prueba al instante; **Desactivar** borra la suscripción de este dispositivo.
 - Si el navegador tiene las notificaciones bloqueadas, hay que permitirlas en los ajustes del sitio; la tarjeta lo indica.
@@ -207,7 +214,9 @@ El envío lo hace el mismo schedule que ya manda los avisos por Telegram (`/api/
 
 `proyectos`: `id` (uuid), `nombre`, `color` (hex), `created_at`.
 
-`tareas`: `id` (uuid), `titulo`, `detalle`, `tipo` (`hoy` | `manana` | `semana` | `proyecto`), `estado` (`pendiente` | `hecha` | `sin_terminar`), `duracion_estimada_min` (nullable), `paralelizable` (bool), `proyecto_id` (fk nullable), `fecha_para` (date nullable), `created_at`, `completed_at`. Las de `manana` guardan `fecha_para` = mañana; el cron las convierte en `hoy` al cambiar el día.
+`tareas`: `id` (uuid), `titulo`, `detalle`, `tipo` (`hoy` | `manana` | `semana` | `proyecto` | `programada`), `estado` (`pendiente` | `hecha` | `sin_terminar`), `duracion_estimada_min` (nullable), `paralelizable` (bool), `proyecto_id` (fk nullable), `fecha_para` (date nullable), `created_at`, `completed_at`. Las de `manana` guardan `fecha_para` = mañana; las `programada` guardan la fecha elegida y el cron las acerca a Mañana/Hoy. Las de `programada` generan dos recordatorios automáticos a las 9:00 (día antes y día de la fecha).
+
+`calendario_eventos`: `id`, `titulo`, `detalle`, `categoria` (`examen` | `entrega` | `reunion` | `medico` | `cumpleanos` | `viaje` | `otro`), `fecha` (date), `hora` (time nullable), `todo_el_dia`, `created_at`.
 
 `tareas_pendientes`: `id`, `chat_id` (único), `texto`, `titulo`, `detalle`, `duracion_estimada_min`, `paralelizable`, `created_at`. Solo la usa el servidor; no tiene acceso para `anon`.
 
@@ -223,6 +232,8 @@ app/
   api/plan-dia/route.ts           # subconjunto sugerido de tareas de hoy
   api/cron/cerrar-dia/route.ts    # pasa las de hoy no hechas a sin_terminar
   api/recordatorios/enviar/route.ts # manda los recordatorios vencidos por Telegram y push
+  api/eventos/route.ts            # alta, edición, borrado y consulta del calendario
+  api/tareas/route.ts             # crea tareas programadas y sus dos recordatorios
   api/push/clave/route.ts         # clave pública VAPID para suscribirse
   api/push/suscribir/route.ts     # alta/baja de dispositivos
   api/push/probar/route.ts        # notificación de prueba
@@ -236,6 +247,7 @@ public/
   icons/ y apple-touch-icon-v3.png # iconos generados desde el diseño
 components/
   Dashboard.tsx                   # estado, mutaciones, layout y vista a pantalla completa
+  CalendarPanel.tsx               # calendario mensual, eventos y formulario
   AppHeader.tsx                   # saludo, fecha y "Proponer plan"
   StatsRow.tsx                    # hechas hoy, racha, activas, sin terminar
   TaskCard.tsx                    # checkbox, badges, reasignación rápida
@@ -248,6 +260,8 @@ lib/
   correccion.ts                   # cambios sobre la tarea antes de confirmarla
   plan.ts                         # algoritmo del plan del día
   dates.ts                        # zona horaria, saludo, racha
+  fechas.ts                       # fechas y horas en lenguaje natural
+  eventos.ts / eventosServer.ts   # categorías, detección y acceso a calendario_eventos
   duration.ts                     # parseo/formato de tiempos
   insforge/client.ts              # cliente de navegador (anon key)
   insforge/server.ts              # cliente de servidor (admin API key)

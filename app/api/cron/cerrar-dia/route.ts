@@ -1,4 +1,4 @@
-import { hoyISO } from "@/lib/dates";
+import { hoyISO, mananaISO } from "@/lib/dates";
 import { insforgeServer } from "@/lib/insforge/server";
 
 export const runtime = "nodejs";
@@ -22,6 +22,46 @@ export async function GET() {
   try {
     const insforge = insforgeServer();
     const hoy = hoyISO();
+
+    // Las tareas programadas se acercan solas: el día antes pasan a Mañana y
+    // el día de la fecha, a Hoy, para que no se queden olvidadas.
+    const { data: programadas, error: errorProgramadas } = await insforge.database
+      .from("tareas")
+      .select("id, fecha_para")
+      .eq("tipo", "programada")
+      .eq("estado", "pendiente");
+
+    if (errorProgramadas) throw errorProgramadas;
+
+    const manana = mananaISO();
+    const programadasHoy = ((programadas ?? []) as Array<{
+      id: string;
+      fecha_para: string | null;
+    }>)
+      .filter((t) => t.fecha_para && t.fecha_para <= hoy)
+      .map((t) => t.id);
+    const programadasManana = ((programadas ?? []) as Array<{
+      id: string;
+      fecha_para: string | null;
+    }>)
+      .filter((t) => t.fecha_para === manana)
+      .map((t) => t.id);
+
+    if (programadasHoy.length > 0) {
+      const { error } = await insforge.database
+        .from("tareas")
+        .update({ tipo: "hoy" })
+        .in("id", programadasHoy);
+      if (error) throw error;
+    }
+
+    if (programadasManana.length > 0) {
+      const { error } = await insforge.database
+        .from("tareas")
+        .update({ tipo: "manana" })
+        .in("id", programadasManana);
+      if (error) throw error;
+    }
 
     const { data: paraManana, error: errorManana } = await insforge.database
       .from("tareas")
@@ -70,6 +110,8 @@ export async function GET() {
 
     return Response.json({
       ok: true,
+      programadas_hoy: programadasHoy.length,
+      programadas_manana: programadasManana.length,
       promovidas: promovidas.length,
       movidas: vencidas.length,
     });

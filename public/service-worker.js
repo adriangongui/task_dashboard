@@ -1,5 +1,5 @@
 /* Service worker del panel: shell offline, estáticos con caché y avisos push. */
-const VERSION = "task-dashboard-v4";
+const VERSION = "task-dashboard-v5";
 const SHELL = [
   "/",
   "/offline.html",
@@ -94,7 +94,7 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
-/* Avisos push: recordatorios con vibración en Android. */
+/* Avisos push: recordatorios con vibración larga tipo alarma en Android. */
 self.addEventListener("push", (event) => {
   let datos = {};
 
@@ -112,7 +112,12 @@ self.addEventListener("push", (event) => {
     tag: datos.tag || "recordatorio",
     renotify: true,
     requireInteraction: true,
-    vibrate: [200, 100, 200, 100, 300],
+    silent: false,
+    timestamp: Date.now(),
+    // Android usa este patrón al crear el canal de notificaciones. Es lo más
+    // parecido a una alarma que permite una notificación web: no puede sonar
+    // en bucle ni saltarse el modo silencio del sistema.
+    vibrate: [700, 250, 700, 250, 700, 250, 1200],
     data: { url: datos.url || "/" },
     actions: [{ action: "abrir", title: "Abrir" }],
   };

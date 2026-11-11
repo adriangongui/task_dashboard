@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { addDias, hoyISO } from "@/lib/dates";
+import { fechaCorta } from "@/lib/fechas";
 import type { NuevaTarea, Proyecto, Tipo } from "@/lib/types";
 
 interface Props {
@@ -13,6 +15,7 @@ const DESTINOS: Array<{ key: Tipo; label: string; color: string }> = [
   { key: "hoy", label: "Hoy", color: "#5B5DD6" },
   { key: "manana", label: "Mañana", color: "#C08A2E" },
   { key: "semana", label: "Esta semana", color: "#22A06B" },
+  { key: "programada", label: "Programada", color: "#4B93C9" },
   { key: "proyecto", label: "Proyecto", color: "#D97757" },
 ];
 
@@ -26,6 +29,7 @@ export default function NewTaskPanel({
   const [tipo, setTipo] = useState<Tipo>("hoy");
   const [proyectoId, setProyectoId] = useState("");
   const [duracion, setDuracion] = useState("");
+  const [fecha, setFecha] = useState(addDias(hoyISO(), 7));
   const [paralelizable, setParalelizable] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +56,11 @@ export default function NewTaskPanel({
       return;
     }
 
+    if (tipo === "programada" && !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+      setError("Elige una fecha para la tarea programada.");
+      return;
+    }
+
     let minutos: number | null = null;
     if (duracion.trim() !== "") {
       const valor = Number(duracion);
@@ -72,6 +81,7 @@ export default function NewTaskPanel({
         proyecto_id: tipo === "proyecto" && proyectoId ? proyectoId : null,
         duracion_estimada_min: minutos,
         paralelizable,
+        fecha_para: tipo === "programada" ? fecha : null,
       });
       onCerrar();
     } catch (e) {
@@ -197,6 +207,29 @@ export default function NewTaskPanel({
             })}
           </div>
         </fieldset>
+
+        {tipo === "programada" ? (
+          <div className="mt-4">
+            <label
+              htmlFor="nueva-fecha"
+              className="mb-1.5 block text-[11px] font-medium uppercase tracking-[0.12em] text-muted"
+            >
+              Fecha
+            </label>
+            <input
+              id="nueva-fecha"
+              type="date"
+              value={fecha}
+              onChange={(event) => setFecha(event.target.value)}
+              className="w-full rounded-[12px] border border-line bg-white px-3 py-2.5 text-sm outline-none transition focus:border-hoy/45"
+            />
+            <p className="mt-1.5 text-xs text-muted">
+              Te avisaré el día antes y ese mismo día a las 9:00. Se verá en
+              Programadas hasta que llegue la fecha.
+              {fecha ? ` (${fechaCorta(fecha)})` : ""}
+            </p>
+          </div>
+        ) : null}
 
         {tipo === "proyecto" ? (
           <div className="mt-4">

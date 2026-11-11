@@ -1,4 +1,9 @@
-export type Tipo = "hoy" | "manana" | "semana" | "proyecto";
+export type Tipo =
+  | "hoy"
+  | "manana"
+  | "semana"
+  | "proyecto"
+  | "programada";
 
 export type Estado = "pendiente" | "hecha" | "sin_terminar";
 
@@ -16,6 +21,7 @@ export interface NuevaTarea {
   proyecto_id: string | null;
   duracion_estimada_min: number | null;
   paralelizable: boolean;
+  fecha_para?: string | null;
 }
 
 export interface Tarea {
@@ -40,6 +46,8 @@ export interface Clasificacion {
   duracion_estimada_min: number | null;
   paralelizable: boolean;
   proyecto_sugerido: string | null;
+  /** Fecha concreta (YYYY-MM-DD) si la nota la menciona. */
+  fecha: string | null;
   /** false si la nota no dice cuándo ni dónde va: hay que preguntar. */
   destino_claro: boolean;
 }

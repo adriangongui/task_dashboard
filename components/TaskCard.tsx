@@ -2,6 +2,7 @@
 
 import type { KeyboardEvent, PointerEvent } from "react";
 import { formatMin } from "@/lib/duration";
+import { fechaCorta } from "@/lib/fechas";
 import type { Proyecto, Tarea } from "@/lib/types";
 
 interface Props {
@@ -109,6 +110,12 @@ export default function TaskCard({
                 sin estimar
               </span>
             )}
+
+            {tarea.tipo === "programada" && tarea.fecha_para ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#4B93C9]/10 px-2 py-[3px] text-[11px] font-medium text-[#35749F]">
+                📅 {fechaCorta(tarea.fecha_para)}
+              </span>
+            ) : null}
 
             {tarea.paralelizable ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-hoy/10 px-2 py-[3px] text-[11px] font-medium text-[#4C4EBE]">

@@ -13,9 +13,11 @@ import {
 } from "@/lib/dates";
 import { formatMin } from "@/lib/duration";
 import type { PlanDia } from "@/lib/plan";
+import { fechaCorta } from "@/lib/fechas";
 import type { NuevaTarea, Proyecto, Tarea } from "@/lib/types";
 import { insforgeBrowser, insforgeConfigurado } from "@/lib/insforge/client";
 import AppHeader from "./AppHeader";
+import CalendarPanel from "./CalendarPanel";
 import FocusPanel from "./FocusPanel";
 import HechasPanel from "./HechasPanel";
 import ProjectsColumn, { SIN_PROYECTO } from "./ProjectsColumn";
@@ -26,8 +28,19 @@ import NewTaskPanel from "./NewTaskPanel";
 import ProjectDetailPanel from "./ProjectDetailPanel";
 import RemindersPanel from "./RemindersPanel";
 
-type TabKey = "hoy" | "manana" | "semana" | "proyectos" | "sin_terminar";
-type DestinoArrastre = "hoy" | "manana" | "semana" | "sin_terminar";
+type TabKey =
+  | "hoy"
+  | "manana"
+  | "semana"
+  | "programadas"
+  | "proyectos"
+  | "sin_terminar";
+type DestinoArrastre =
+  | "hoy"
+  | "manana"
+  | "semana"
+  | "programadas"
+  | "sin_terminar";
 type Foco =
   | { tipo: "columna"; key: TabKey }
   | { tipo: "proyecto"; id: string }
@@ -72,6 +85,14 @@ const SECCIONES: Array<{
     vacio: "Sin tareas de la semana por ahora.",
   },
   {
+    key: "programadas",
+    titulo: "Programadas",
+    corto: "Programadas",
+    color: "#4B93C9",
+    vacio:
+      "Sin fechas lejanas. Pídele al bot una tarea para el día 8 del mes que viene.",
+  },
+  {
     key: "proyectos",
     titulo: "Proyectos futuros",
     corto: "Proyectos",
@@ -91,6 +112,7 @@ const NOMBRE_DESTINO: Record<DestinoArrastre, string> = {
   hoy: "Hoy",
   manana: "Mañana",
   semana: "Esta semana",
+  programadas: "Programadas",
   sin_terminar: "Sin terminar",
 };
 
@@ -99,6 +121,7 @@ const DESTINO_TAB: Record<TabKey, string> = {
   hoy: "hoy",
   manana: "manana",
   semana: "semana",
+  programadas: "programadas",
   proyectos: "proyectos",
   sin_terminar: "sin_terminar",
 };
@@ -118,6 +141,7 @@ export default function Dashboard() {
   const [hechasAbiertas, setHechasAbiertas] = useState(false);
   const [enfoque, setEnfoque] = useState(false);
   const [recordatoriosAbiertos, setRecordatoriosAbiertos] = useState(false);
+  const [calendarioAbierto, setCalendarioAbierto] = useState(false);
   const [foco, setFoco] = useState<Foco>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [arrastre, setArrastre] = useState<{ titulo: string; x: number; y: number } | null>(
@@ -295,6 +319,18 @@ export default function Dashboard() {
           setExpandidos((prev) => new Set(prev).add(proyectoId));
           setTab("proyectos");
           setAviso("Movida a ese proyecto");
+          return;
+        }
+
+        if (destino === "programadas") {
+          const fecha = addDias(hoyISO(), 7);
+          await actualizarTarea(id, {
+            tipo: "programada",
+            estado: "pendiente",
+            fecha_para: fecha,
+          });
+          setTab("programadas");
+          setAviso(`Programada para el ${fechaCorta(fecha)}`);
           return;
         }
 
@@ -531,6 +567,27 @@ export default function Dashboard() {
   }, []);
 
   const crearTarea = useCallback(async (datos: NuevaTarea) => {
+    if (datos.tipo === "programada") {
+      const respuesta = await fetch("/api/tareas", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(datos),
+      });
+      const cuerpo = await respuesta.json();
+
+      if (!respuesta.ok) {
+        throw new Error(cuerpo?.error ?? "No se pudo crear la tarea");
+      }
+
+      const nueva = cuerpo.tarea as Tarea;
+      setTareas((prev) => [nueva, ...prev]);
+      setTab("programadas");
+      setAviso(
+        `Programada para el ${nueva.fecha_para ? fechaCorta(nueva.fecha_para) : "día indicado"}`,
+      );
+      return;
+    }
+
     const { data, error: errorInsert } = await insforgeBrowser()
       .database.from("tareas")
       .insert([
@@ -543,11 +600,12 @@ export default function Dashboard() {
           paralelizable: datos.paralelizable,
           proyecto_id: datos.proyecto_id,
           fecha_para:
-            datos.tipo === "hoy"
+            datos.fecha_para ??
+            (datos.tipo === "hoy"
               ? hoyISO()
               : datos.tipo === "manana"
                 ? mananaISO()
-                : null,
+                : null),
         },
       ])
       .select();
@@ -621,6 +679,13 @@ export default function Dashboard() {
       tareas.filter((t) => t.tipo === "semana" && t.estado === "pendiente"),
     [tareas],
   );
+  const pendientesProgramadas = useMemo(
+    () =>
+      tareas
+        .filter((t) => t.tipo === "programada" && t.estado === "pendiente")
+        .sort((a, b) => (a.fecha_para ?? "").localeCompare(b.fecha_para ?? "")),
+    [tareas],
+  );
   const sinTerminar = useMemo(
     () => tareas.filter((t) => t.estado === "sin_terminar"),
     [tareas],
@@ -661,10 +726,13 @@ export default function Dashboard() {
       {
         label: "Activas",
         value: String(
-          pendientesHoy.length + pendientesManana.length + pendientesSemana.length,
+          pendientesHoy.length +
+          pendientesManana.length +
+          pendientesSemana.length +
+          pendientesProgramadas.length,
         ),
         accent: "#5B5DD6",
-        hint: "hoy, mañana y semana",
+        hint: "hoy, mañana, semana y programadas",
       },
       {
         label: "Sin terminar",
@@ -679,6 +747,7 @@ export default function Dashboard() {
       pendientesHoy.length,
       pendientesManana.length,
       pendientesSemana.length,
+      pendientesProgramadas.length,
       sinTerminar.length,
     ],
   );
@@ -687,6 +756,7 @@ export default function Dashboard() {
     hoy: pendientesHoy.length,
     manana: pendientesManana.length,
     semana: pendientesSemana.length,
+    programadas: pendientesProgramadas.length,
     proyectos: proyectos.length,
     sin_terminar: sinTerminar.length,
   };
@@ -733,6 +803,7 @@ export default function Dashboard() {
         onVerHechas={() => setHechasAbiertas(true)}
         onEnfoque={() => setEnfoque(true)}
         onRecordatorios={() => setRecordatoriosAbiertos(true)}
+        onCalendario={() => setCalendarioAbierto(true)}
         hechasRecientes={hechasRecientes.length}
       />
 
@@ -827,7 +898,7 @@ export default function Dashboard() {
         })}
       </div>
 
-      <div className="mt-4 flex flex-col gap-6 lg:mt-6 lg:grid lg:grid-cols-5 lg:items-start lg:gap-5">
+      <div className="mt-4 flex flex-col gap-6 lg:mt-6 lg:grid lg:grid-cols-6 lg:items-start lg:gap-5">
         {SECCIONES.map((seccion) => {
           const visible = tab === seccion.key;
           const esProyectos = seccion.key === "proyectos";
@@ -838,7 +909,9 @@ export default function Dashboard() {
                 ? pendientesManana
                 : seccion.key === "semana"
                   ? pendientesSemana
-                  : sinTerminar;
+                  : seccion.key === "programadas"
+                    ? pendientesProgramadas
+                    : sinTerminar;
 
           return (
             <section
@@ -946,7 +1019,9 @@ export default function Dashboard() {
                     ? pendientesManana
                     : foco.key === "semana"
                       ? pendientesSemana
-                      : foco.key === "sin_terminar"
+                      : foco.key === "programadas"
+                        ? pendientesProgramadas
+                        : foco.key === "sin_terminar"
                         ? sinTerminar
                         : tareas.filter(
                             (t) => t.tipo === "proyecto" && t.estado === "pendiente",
@@ -1051,6 +1126,10 @@ export default function Dashboard() {
         <RemindersPanel
           onCerrar={() => setRecordatoriosAbiertos(false)}
         />
+      ) : null}
+
+      {calendarioAbierto ? (
+        <CalendarPanel onCerrar={() => setCalendarioAbierto(false)} />
       ) : null}
 
       {hechasAbiertas ? (

@@ -1,5 +1,11 @@
-import { addDias, hoyISO, ZONA } from "./dates";
+import { addDias, hoyISO, mananaISO, ZONA } from "./dates";
 import { interpretarDestinoRapido, normalizarTexto } from "./destino";
+import {
+  categoriaDeTexto,
+  LISTA_CATEGORIAS,
+  type CategoriaEvento,
+} from "./eventos";
+import { fechaDeTexto, horaDeTexto } from "./fechas";
 import { fechaHoraLarga, madridAISO, partesMadrid } from "./recordatorios";
 import { limpiarTitulo } from "./titulo";
 import type { Clasificacion, DestinoResuelto, Tipo } from "./types";
@@ -7,7 +13,13 @@ import type { Clasificacion, DestinoResuelto, Tipo } from "./types";
 const MODELO_POR_DEFECTO = "openai/gpt-oss-120b";
 const URL_GROQ = "https://api.groq.com/openai/v1/chat/completions";
 
-const TIPOS_VALIDOS: Tipo[] = ["hoy", "manana", "semana", "proyecto"];
+const TIPOS_VALIDOS: Tipo[] = [
+  "hoy",
+  "manana",
+  "semana",
+  "proyecto",
+  "programada",
+];
 const ACCIONES_VALIDAS: DestinoResuelto["accion"][] = [
   "hoy",
   "manana",
@@ -33,7 +45,8 @@ Devuelve SOLO un JSON válido, sin markdown ni explicaciones, con esta forma exa
     {
       "titulo": "resumen corto de máximo 8 palabras, en imperativo",
       "detalle": "el texto original, pulido pero sin recortar información",
-      "tipo": "hoy" | "manana" | "semana" | "proyecto",
+      "tipo": "hoy" | "manana" | "semana" | "proyecto" | "programada",
+      "fecha": "YYYY-MM-DD o null",
       "duracion_estimada_min": número entero o null si no se puede estimar,
       "paralelizable": true/false,
       "proyecto_sugerido": "nombre del proyecto si detecta que pertenece a uno existente, o null",
@@ -55,6 +68,13 @@ Reglas de clasificación de "tipo":
 - "manana": si dice explícitamente "mañana" o "para mañana".
 - "semana": tiene más margen pero no es un proyecto grande.
 - "proyecto": si menciona o encaja con un proyecto ya existente en la lista, o si describe algo con varias fases.
+- "programada": si el texto fija una fecha concreta que cae dentro de más de dos días: «el 8 del mes que viene», «el 20 de diciembre», «para el 3 de enero». En ese caso rellena "fecha" con esa fecha.
+
+Reglas de "fecha":
+- Solo si el texto menciona un día concreto, no para «hoy», «mañana» o «esta semana».
+- Formato YYYY-MM-DD. Calcula desde HOY (${hoyISO()}), sin cambiar el año salvo que el texto lo diga.
+- «el día 8 del mes que viene» es el día 8 del mes siguiente; «el 8 de diciembre» es la próxima vez que caiga ese 8 de diciembre.
+- Si no hay fecha explícita, "fecha" es null.
 
 Reglas de "destino_claro":
 - true si el texto dice cuándo hacerlo (hoy, mañana, esta semana, el lunes...) o a qué proyecto pertenece.
@@ -142,9 +162,25 @@ function normalizar(datos: unknown, textoOriginal: string): Clasificacion {
   // La coletilla de tiempo elige columna, no forma parte del título.
   const titulo = limpiarTitulo(tituloBruto).slice(0, 120);
 
-  const tipo = TIPOS_VALIDOS.includes(d.tipo as Tipo)
+  let tipo = TIPOS_VALIDOS.includes(d.tipo as Tipo)
     ? (d.tipo as Tipo)
     : "hoy";
+
+  // La fecha se calcula también aquí, sin depender de que el modelo acierte
+  // el año. Si cae más allá de mañana, la tarea es programada.
+  const fechaIA =
+    typeof d.fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.fecha.trim())
+      ? d.fecha.trim()
+      : null;
+  const fecha = fechaDeTexto(textoOriginal, hoyISO()) ?? fechaIA;
+  const hoy = hoyISO();
+  const manana = mananaISO();
+
+  if (fecha && tipo !== "proyecto") {
+    if (fecha <= hoy) tipo = "hoy";
+    else if (fecha === manana) tipo = "manana";
+    else tipo = "programada";
+  }
 
   const duracion =
     typeof d.duracion_estimada_min === "number" &&
@@ -166,6 +202,7 @@ function normalizar(datos: unknown, textoOriginal: string): Clasificacion {
         ? d.detalle.trim()
         : textoOriginal.trim(),
     tipo,
+    fecha,
     duracion_estimada_min: duracion,
     paralelizable: d.paralelizable === true,
     proyecto_sugerido: proyecto,
@@ -385,14 +422,17 @@ Reglas de fecha:
 
   // Para «mañana», «pasado mañana», «el lunes»… la fecha se calcula aquí:
   // así no depende de que el modelo acierte el año o el día de la semana.
-  const fechaCalculada = fechaRelativaEnTexto(texto, hoy);
+  const fechaCalculada =
+    fechaDeTexto(soloCuando(texto), hoy) ??
+    fechaRelativaEnTexto(texto, hoy);
+  const horaCalculada = horaDeTexto(texto);
 
   let recordarAt: string | null = null;
 
-  if (fechaCalculada || fecha || hora) {
+  if (fechaCalculada || fecha || hora || horaCalculada) {
     const base = actual ? partesMadrid(actual.recordarAt) : null;
     const dia = fechaCalculada ?? fecha ?? base?.fecha ?? null;
-    const momento = hora ?? base?.hora ?? null;
+    const momento = horaCalculada ?? hora ?? base?.hora ?? null;
     if (dia && momento) recordarAt = madridAISO(dia, momento);
   }
 
@@ -456,4 +496,80 @@ ${lista}`;
       : null;
 
   return { accion, proyecto };
+}
+
+export interface EventoInterpretado {
+  titulo: string;
+  detalle: string;
+  categoria: CategoriaEvento;
+  fecha: string | null;
+  hora: string | null;
+}
+
+/**
+ * Convierte «el día 8 del mes que viene tengo un examen de cálculo» en un
+ * evento del calendario. Si el texto no dice cuándo, `fecha` es null y el
+ * webhook pregunta el día.
+ */
+export async function interpretarEvento(
+  texto: string,
+): Promise<EventoInterpretado> {
+  const hoy = hoyISO();
+  const fechaHoy = fechaLargaCompleta(hoy);
+
+  const sistema = `Eres el asistente de calendario de un gestor personal.
+
+HOY ES ${fechaHoy} y la fecha de hoy es ${hoy} en Europe/Madrid.
+
+Devuelve SOLO un JSON válido, sin markdown ni explicaciones:
+{"titulo": "nombre corto del evento", "detalle": "texto original pulido", "categoria": "examen" | "entrega" | "reunion" | "medico" | "cumpleanos" | "viaje" | "otro", "fecha": "YYYY-MM-DD o null", "hora": "HH:mm o null"}
+
+Reglas:
+- El evento es algo que ocurre un día concreto: un examen, una entrega, una reunión, una cita médica, un cumpleaños, un viaje o similar. No lo conviertas en una tarea.
+- "titulo" es el nombre del evento, sin la fecha ni la fórmula de petición («apunta», «el día 8 tengo»). Ejemplo: «examen de cálculo».
+- "detalle" conserva la información útil del texto (asignatura, lugar, proyecto, personas).
+- "categoria" debe ser una de: ${LISTA_CATEGORIAS.join(", ")}.
+- "fecha": calcula desde HOY (${hoy}). «el día 8 del mes que viene» es el día 8 del mes siguiente; «el 8 de diciembre» es la próxima vez que caiga ese día. Si no se deduce, null.
+- "hora": solo si el texto la dice; si no, null.
+- No inventes datos.`;
+
+  const datos = (await pedirJSON(
+    sistema,
+    `Texto: """${texto}"""`,
+  )) as Record<string, unknown>;
+
+  const fechaIA =
+    typeof datos.fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(datos.fecha.trim())
+      ? datos.fecha.trim()
+      : null;
+  const fecha = fechaDeTexto(texto, hoy) ?? fechaIA;
+
+  const horaIA =
+    typeof datos.hora === "string" && /^\d{1,2}:\d{2}$/.test(datos.hora.trim())
+      ? datos.hora.trim().padStart(5, "0")
+      : null;
+  const hora = horaDeTexto(texto) ?? horaIA;
+
+  const categoriaTexto = categoriaDeTexto(texto);
+  const categoriaIA =
+    typeof datos.categoria === "string" &&
+    LISTA_CATEGORIAS.includes(datos.categoria as CategoriaEvento)
+      ? (datos.categoria as CategoriaEvento)
+      : "otro";
+
+  const tituloBruto =
+    typeof datos.titulo === "string" && datos.titulo.trim().length > 0
+      ? datos.titulo.trim()
+      : texto.trim().split(/\s+/).slice(0, 8).join(" ");
+
+  return {
+    titulo: limpiarTitulo(tituloBruto).slice(0, 120),
+    detalle:
+      typeof datos.detalle === "string" && datos.detalle.trim().length > 0
+        ? datos.detalle.trim()
+        : texto.trim(),
+    categoria: categoriaTexto ?? categoriaIA,
+    fecha,
+    hora,
+  };
 }

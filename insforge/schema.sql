@@ -8,7 +8,7 @@
 do $$
 begin
   if not exists (select 1 from pg_type where typname = 'tipo_tarea') then
-    create type tipo_tarea as enum ('hoy', 'manana', 'semana', 'proyecto');
+    create type tipo_tarea as enum ('hoy', 'manana', 'semana', 'proyecto', 'programada');
   end if;
   if not exists (select 1 from pg_type where typname = 'estado_tarea') then
     create type estado_tarea as enum ('pendiente', 'hecha', 'sin_terminar');
@@ -104,6 +104,32 @@ alter table public.ajustes enable row level security;
 insert into public.ajustes (clave, valor)
 values ('recordatorios_token', md5(random()::text || clock_timestamp()::text))
 on conflict (clave) do nothing;
+
+create table if not exists public.calendario_eventos (
+  id uuid primary key default gen_random_uuid(),
+  titulo text not null,
+  detalle text not null default '',
+  categoria text not null default 'otro',
+  fecha date not null,
+  hora time,
+  todo_el_dia boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists calendario_eventos_fecha_idx
+  on public.calendario_eventos (fecha, hora);
+
+alter table public.calendario_eventos enable row level security;
+
+grant select, insert, update, delete on public.calendario_eventos
+  to anon, authenticated;
+
+drop policy if exists "acceso personal calendario" on public.calendario_eventos;
+create policy "acceso personal calendario"
+  on public.calendario_eventos
+  for all
+  using (true)
+  with check (true);
 
 create index if not exists tareas_tipo_estado_idx on public.tareas (tipo, estado);
 create index if not exists tareas_proyecto_idx on public.tareas (proyecto_id);

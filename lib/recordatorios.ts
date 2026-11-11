@@ -1,4 +1,4 @@
-import { ZONA } from "./dates";
+import { addDias, ZONA } from "./dates";
 import { insforgeServer } from "./insforge/server";
 
 export interface Recordatorio {
@@ -201,7 +201,7 @@ export async function guardarRecordatorio(datos: {
 }
 
 export async function listarRecordatoriosPendientes(
-  limite = 20,
+  limite = 100,
 ): Promise<Recordatorio[]> {
   const { data, error } = await insforgeServer()
     .database.from("recordatorios")
@@ -227,6 +227,119 @@ export async function pendientesDeEnviar(): Promise<Recordatorio[]> {
   if (error) throw error;
 
   return (data ?? []) as unknown as Recordatorio[];
+}
+
+/** Recordatorios pendientes cuya hora cae entre dos fechas de Madrid. */
+export async function listarRecordatoriosEntre(
+  desde: string,
+  hasta: string,
+): Promise<Recordatorio[]> {
+  const inicio = madridAISO(desde, "00:00");
+  const fin = madridAISO(hasta, "23:59");
+
+  if (!inicio || !fin) return [];
+
+  const { data, error } = await insforgeServer()
+    .database.from("recordatorios")
+    .select("*")
+    .eq("enviado", false)
+    .gte("recordar_at", inicio)
+    .lte("recordar_at", fin)
+    .order("recordar_at", { ascending: true })
+    .limit(100);
+
+  if (error) throw error;
+
+  return (data ?? []) as unknown as Recordatorio[];
+}
+
+export async function obtenerRecordatorio(
+  id: string,
+): Promise<Recordatorio | null> {
+  const { data, error } = await insforgeServer()
+    .database.from("recordatorios")
+    .select("*")
+    .eq("id", id)
+    .limit(1);
+
+  if (error) throw error;
+  return (data as Recordatorio[] | null)?.[0] ?? null;
+}
+
+export async function actualizarRecordatorio(
+  id: string,
+  datos: { titulo?: string; detalle?: string; recordarAt?: string },
+): Promise<void> {
+  const cambios: Record<string, unknown> = {};
+  if (datos.titulo !== undefined) cambios.titulo = datos.titulo;
+  if (datos.detalle !== undefined) cambios.detalle = datos.detalle;
+  if (datos.recordarAt !== undefined) cambios.recordar_at = datos.recordarAt;
+
+  if (Object.keys(cambios).length === 0) return;
+
+  const { error } = await insforgeServer()
+    .database.from("recordatorios")
+    .update(cambios)
+    .eq("id", id);
+
+  if (error) throw error;
+}
+
+export async function borrarRecordatorio(id: string): Promise<void> {
+  const { error } = await insforgeServer()
+    .database.from("recordatorios")
+    .delete()
+    .eq("id", id);
+
+  if (error) throw error;
+}
+
+/**
+ * Crea los dos avisos de una tarea programada: el día antes y el día de la
+ * fecha, a las 9:00 en Madrid. Si el aviso ya ha pasado, no se crea.
+ */
+export async function crearRecordatoriosTarea(datos: {
+  titulo: string;
+  detalle: string;
+  fecha: string;
+  chatId?: string | number | null;
+}): Promise<number> {
+  const ahora = Date.now();
+  const avisos: Array<Record<string, unknown>> = [];
+
+  const candidatos = [
+    {
+      fecha: addDias(datos.fecha, -1),
+      texto: `Mañana toca «${datos.titulo}».`,
+    },
+    {
+      fecha: datos.fecha,
+      texto: `Hoy toca «${datos.titulo}».`,
+    },
+  ];
+
+  for (const candidato of candidatos) {
+    const recordarAt = madridAISO(candidato.fecha, "09:00");
+    if (!recordarAt || new Date(recordarAt).getTime() <= ahora) continue;
+
+    avisos.push({
+      titulo: `Tarea: ${datos.titulo}`,
+      detalle: datos.detalle
+        ? `${candidato.texto}\n\n${datos.detalle}`
+        : candidato.texto,
+      recordar_at: recordarAt,
+      chat_id: datos.chatId ? String(datos.chatId) : null,
+    });
+  }
+
+  if (avisos.length === 0) return 0;
+
+  const { error } = await insforgeServer()
+    .database.from("recordatorios")
+    .insert(avisos);
+
+  if (error) throw error;
+  return avisos.length;
 }
 
 export async function marcarEnviado(id: string): Promise<void> {

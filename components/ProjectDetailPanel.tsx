@@ -16,6 +16,7 @@ const ETIQUETA_TIPO: Record<Tarea["tipo"], string> = {
   hoy: "Hoy",
   manana: "Mañana",
   semana: "Esta semana",
+  programada: "Programada",
   proyecto: "Proyecto",
 };
 
